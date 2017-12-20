@@ -12,9 +12,9 @@ from keras.preprocessing import sequence
 
 
 ############### Global Parameters ###############
-video_path = '/home/eric/dataset/youtube_videos'
+video_path = '/home/ubuntu/dataset/youtube_videos'
 video_data_path='./data/video_corpus.csv'
-video_feat_path = '/home/eric/dataset/youtube_feats'
+video_feat_path = '/home/ubuntu/dataset/youtube_feats'
 
 model_path = './models/'
 ############## Train Parameters #################
@@ -22,7 +22,7 @@ dim_image = 4096
 dim_hidden= 256
 n_frame_step = 80
 n_epochs = 1000
-batch_size = 100
+batch_size = 128
 learning_rate = 0.001
 ##################################################
 
@@ -35,7 +35,7 @@ class Video_Caption_Generator():
         self.batch_size = batch_size
         self.n_lstm_steps = n_lstm_steps
 
-        with tf.device("/cpu:0"):
+        with tf.device("/gpu:0"):
             self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
 
         self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
@@ -69,74 +69,74 @@ class Video_Caption_Generator():
         loss = 0.0
 
         with tf.variable_scope(tf.get_variable_scope()) as scope:
-            image_emb_seq = tf.unstack(image_emb, self.n_lstm_steps, 1)
+            #image_emb_seq = tf.unstack(image_emb, self.n_lstm_steps, 1)
 
-            with tf.variable_scope("LSTM1"):
-                output1, _ = rnn.static_rnn(self.lstm1, image_emb_seq, dtype=tf.float32)
+            #with tf.variable_scope("LSTM1"):
+            #    output1, _ = rnn.static_rnn(self.lstm1, image_emb_seq, dtype=tf.float32)
 
-            with tf.variable_scope("LSTM2"):
-                output2, _ = rnn.static_rnn(self.lstm2, [tf.concat([padding, output], 1) for output in output1], dtype=tf.float32)
+            #with tf.variable_scope("LSTM2"):
+            #    output2, _ = rnn.static_rnn(self.lstm2, [tf.concat([padding, output], 1) for output in output1], dtype=tf.float32)
 
-            #for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
-            #    if i > 0:
-            #        tf.get_variable_scope().reuse_variables()
-            #    with tf.variable_scope("LSTM1"):
-            #        (output1, state1) = self.lstm1( image_emb[:, i, :], state1 )
-            #    with tf.variable_scope("LSTM2"):
-            #        (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
+            for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
+                if i > 0:
+                    tf.get_variable_scope().reuse_variables()
+                with tf.variable_scope("LSTM1"):
+                    (output1, state1) = self.lstm1( image_emb[:, i, :], state1 )
+                with tf.variable_scope("LSTM2"):
+                    (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
 
             # Each video might have different length. Need to mask those.
             # But how? Padding with 0 would be enough?
             # Therefore... TODO: for those short videos, keep the last LSTM hidden and output til the end.
 
-            current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
-                tf.nn.embedding_lookup(self.Wemb, cap) for cap in tf.unstack(caption, self.n_lstm_steps, 1)]
+            #current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
+            #    tf.nn.embedding_lookup(self.Wemb, cap) for cap in tf.unstack(caption, self.n_lstm_steps, 1)]
 
-            with tf.variable_scope("LSTM1"):
-                output1, _ = rnn.static_rnn(self.lstm1, [padding] * self.n_lstm_steps, dtype=tf.float32)
+            #with tf.variable_scope("LSTM1"):
+            #    output1, _ = rnn.static_rnn(self.lstm1, [padding] * self.n_lstm_steps, dtype=tf.float32)
 
-            with tf.variable_scope("LSTM2"):
-                output2, _ = rnn.static_rnn(
-                    self.lstm2,
-                    [tf.concat([current_embed, output], 1) for current_embed, output in zip(current_embeds, output1)],
-                    dtype=tf.float32)
+            #with tf.variable_scope("LSTM2"):
+            #    output2, _ = rnn.static_rnn(
+            #        self.lstm2,
+            #        [tf.concat([current_embed, output], 1) for current_embed, output in zip(current_embeds, output1)],
+            #        dtype=tf.float32)
             
-            for i in range(self.n_lstm_steps):
-                labels = tf.expand_dims(caption[:,i], 1)
-                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-                concated = tf.concat([indices, labels], 1)
-                onehot_labels = tf.sparse_to_dense(concated, [self.batch_size, self.n_words], 1.0, 0.0)
-
-                logit_words = tf.nn.xw_plus_b(output2[i], self.embed_word_W, self.embed_word_b)
-                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
-                cross_entropy = cross_entropy * caption_mask[:, i]
-
-                probs.append(logit_words)
-
-                current_loss = tf.reduce_sum(cross_entropy)
-                loss += current_loss               
-
-            #for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
-            #    if i == 0:
-            #        current_embed = tf.zeros([self.batch_size, self.dim_hidden])
-            #    else:
-            #        with tf.device("/cpu:0"):
-            #            current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
-            #    tf.get_variable_scope().reuse_variables()
-            #    with tf.variable_scope("LSTM1"):
-            #        (output1, state1) = self.lstm1( padding, state1 )
-            #    with tf.variable_scope("LSTM2"):
-            #        (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+            #for i in range(self.n_lstm_steps):
             #    labels = tf.expand_dims(caption[:,i], 1)
             #    indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
             #    concated = tf.concat([indices, labels], 1)
-            #    onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
-            #    logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
+            #    onehot_labels = tf.sparse_to_dense(concated, [self.batch_size, self.n_words], 1.0, 0.0)
+
+            #    logit_words = tf.nn.xw_plus_b(output2[i], self.embed_word_W, self.embed_word_b)
             #    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
             #    cross_entropy = cross_entropy * caption_mask[:, i]
+
             #    probs.append(logit_words)
+
             #    current_loss = tf.reduce_sum(cross_entropy)
-            #    loss += current_loss
+            #    loss += current_loss               
+
+            for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
+                if i == 0:
+                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                else:
+                    with tf.device("/gpu:0"):
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+                tf.get_variable_scope().reuse_variables()
+                with tf.variable_scope("LSTM1"):
+                    (output1, state1) = self.lstm1( padding, state1 )
+                with tf.variable_scope("LSTM2"):
+                    (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+                labels = tf.expand_dims(caption[:,i], 1)
+                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
+                concated = tf.concat([indices, labels], 1)
+                onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+                logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
+                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+                cross_entropy = cross_entropy * caption_mask[:, i]
+                probs.append(logit_words)
+                current_loss = tf.reduce_sum(cross_entropy)
+                loss += current_loss
 
         loss = loss / tf.reduce_sum(caption_mask)
         return loss, video, video_mask, caption, caption_mask, probs
@@ -186,7 +186,7 @@ class Video_Caption_Generator():
             generated_words.append(max_prob_index)
             probs.append(logit_words)
 
-            with tf.device("/cpu:0"):
+            with tf.device("/gpu:0"):
                 current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
                 current_embed = tf.expand_dims(current_embed, 0)
 
