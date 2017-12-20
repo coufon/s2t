@@ -7,8 +7,25 @@ import ipdb
 
 import cv2
 
-from tensorflow.models.rnn import rnn_cell
+from tensorflow.contrib import rnn
 from keras.preprocessing import sequence
+
+
+############### Global Parameters ###############
+video_path = '/home/eric/dataset/youtube_videos'
+video_data_path='./data/video_corpus.csv'
+video_feat_path = '/home/eric/dataset/youtube_feats'
+
+model_path = './models/'
+############## Train Parameters #################
+dim_image = 4096
+dim_hidden= 256
+n_frame_step = 80
+n_epochs = 1000
+batch_size = 100
+learning_rate = 0.001
+##################################################
+
 
 class Video_Caption_Generator():
     def __init__(self, dim_image, n_words, dim_hidden, batch_size, n_lstm_steps, bias_init_vector=None):
@@ -21,8 +38,8 @@ class Video_Caption_Generator():
         with tf.device("/cpu:0"):
             self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
 
-        self.lstm1 = rnn_cell.BasicLSTMCell(dim_hidden)
-        self.lstm2 = rnn_cell.BasicLSTMCell(dim_hidden)
+        self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
+        self.lstm2 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
 
         self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
         self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
@@ -44,55 +61,82 @@ class Video_Caption_Generator():
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
         image_emb = tf.reshape(image_emb, [self.batch_size, self.n_lstm_steps, self.dim_hidden])
 
-        state1 = tf.zeros([self.batch_size, self.lstm1.state_size])
-        state2 = tf.zeros([self.batch_size, self.lstm2.state_size])
+        state1 = self.lstm1.zero_state(self.batch_size, dtype=tf.float32)
+        state2 = self.lstm2.zero_state(self.batch_size, dtype=tf.float32)
         padding = tf.zeros([self.batch_size, self.dim_hidden])
 
-        probs = []
-
+        probs = list()
         loss = 0.0
 
-        for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
-            if i > 0:
-                tf.get_variable_scope().reuse_variables()
+        with tf.variable_scope(tf.get_variable_scope()) as scope:
+            image_emb_seq = tf.unstack(image_emb, self.n_lstm_steps, 1)
 
             with tf.variable_scope("LSTM1"):
-                output1, state1 = self.lstm1( image_emb[:,i,:], state1 )
+                output1, _ = rnn.static_rnn(self.lstm1, image_emb_seq, dtype=tf.float32)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2( tf.concat(1,[padding, output1]), state2 )
+                output2, _ = rnn.static_rnn(self.lstm2, [tf.concat([padding, output], 1) for output in output1], dtype=tf.float32)
 
-        # Each video might have different length. Need to mask those.
-        # But how? Padding with 0 would be enough?
-        # Therefore... TODO: for those short videos, keep the last LSTM hidden and output til the end.
+            #for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
+            #    if i > 0:
+            #        tf.get_variable_scope().reuse_variables()
+            #    with tf.variable_scope("LSTM1"):
+            #        (output1, state1) = self.lstm1( image_emb[:, i, :], state1 )
+            #    with tf.variable_scope("LSTM2"):
+            #        (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
 
-        for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
-            if i == 0:
-                current_embed = tf.zeros([self.batch_size, self.dim_hidden])
-            else:
-                with tf.device("/cpu:0"):
-                    current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+            # Each video might have different length. Need to mask those.
+            # But how? Padding with 0 would be enough?
+            # Therefore... TODO: for those short videos, keep the last LSTM hidden and output til the end.
 
-            tf.get_variable_scope().reuse_variables()
+            current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
+                tf.nn.embedding_lookup(self.Wemb, cap) for cap in tf.unstack(caption, self.n_lstm_steps, 1)]
+
             with tf.variable_scope("LSTM1"):
-                output1, state1 = self.lstm1( padding, state1 )
+                output1, _ = rnn.static_rnn(self.lstm1, [padding] * self.n_lstm_steps, dtype=tf.float32)
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2( tf.concat(1,[current_embed, output1]), state2 )
+                output2, _ = rnn.static_rnn(
+                    self.lstm2,
+                    [tf.concat([current_embed, output], 1) for current_embed, output in zip(current_embeds, output1)],
+                    dtype=tf.float32)
+            
+            for i in range(self.n_lstm_steps):
+                labels = tf.expand_dims(caption[:,i], 1)
+                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
+                concated = tf.concat([indices, labels], 1)
+                onehot_labels = tf.sparse_to_dense(concated, [self.batch_size, self.n_words], 1.0, 0.0)
 
-            labels = tf.expand_dims(caption[:,i], 1)
-            indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-            concated = tf.concat(1, [indices, labels])
-            onehot_labels = tf.sparse_to_dense(concated, tf.pack([self.batch_size, self.n_words]), 1.0, 0.0)
+                logit_words = tf.nn.xw_plus_b(output2[i], self.embed_word_W, self.embed_word_b)
+                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+                cross_entropy = cross_entropy * caption_mask[:, i]
 
-            logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
-            cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logit_words, onehot_labels)
-            cross_entropy = cross_entropy * caption_mask[:,i]
+                probs.append(logit_words)
 
-            probs.append(logit_words)
+                current_loss = tf.reduce_sum(cross_entropy)
+                loss += current_loss               
 
-            current_loss = tf.reduce_sum(cross_entropy)
-            loss += current_loss
+            #for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
+            #    if i == 0:
+            #        current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+            #    else:
+            #        with tf.device("/cpu:0"):
+            #            current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+            #    tf.get_variable_scope().reuse_variables()
+            #    with tf.variable_scope("LSTM1"):
+            #        (output1, state1) = self.lstm1( padding, state1 )
+            #    with tf.variable_scope("LSTM2"):
+            #        (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+            #    labels = tf.expand_dims(caption[:,i], 1)
+            #    indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
+            #    concated = tf.concat([indices, labels], 1)
+            #    onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+            #    logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
+            #    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+            #    cross_entropy = cross_entropy * caption_mask[:, i]
+            #    probs.append(logit_words)
+            #    current_loss = tf.reduce_sum(cross_entropy)
+            #    loss += current_loss
 
         loss = loss / tf.reduce_sum(caption_mask)
         return loss, video, video_mask, caption, caption_mask, probs
@@ -151,23 +195,6 @@ class Video_Caption_Generator():
         return video, video_mask, generated_words, probs, embeds
 
 
-############### Global Parameters ###############
-video_path = '/media/storage3/Study/data/youtube_videos'
-video_data_path='./data/video_corpus.csv'
-video_feat_path = '/media/storage3/Study/data/youtube_feats'
-
-vgg16_path = '/home/taeksoo/Package/tensorflow_vgg16/vgg16.tfmodel'
-
-model_path = './models/'
-############## Train Parameters #################
-dim_image = 4096
-dim_hidden= 256
-n_frame_step = 80
-n_epochs = 1000
-batch_size = 100
-learning_rate = 0.001
-##################################################
-
 def get_video_data(video_data_path, video_feat_path, train_ratio=0.9):
     video_data = pd.read_csv(video_data_path, sep=',')
     video_data = video_data[video_data['Language'] == 'English']
@@ -186,6 +213,7 @@ def get_video_data(video_data_path, video_feat_path, train_ratio=0.9):
     test_data = video_data[video_data['video_path'].map(lambda x: x in test_vids)]
 
     return train_data, test_data
+
 
 def preProBuildWordVocab(sentence_iterator, word_count_threshold=5): # borrowed this function from NeuralTalk
     print 'preprocessing word counts and creating vocab based on word count threshold %d' % (word_count_threshold, )
@@ -216,6 +244,7 @@ def preProBuildWordVocab(sentence_iterator, word_count_threshold=5): # borrowed 
     bias_init_vector -= np.max(bias_init_vector) # shift to nice numeric range
     return wordtoix, ixtoword, bias_init_vector
 
+
 def train():
     train_data, _ = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     captions = train_data['Description'].values
@@ -245,8 +274,10 @@ def train():
         np.random.shuffle(index)
         train_data = train_data.ix[index]
 
-        current_train_data = train_data.groupby('video_path').apply(lambda x: x.irow(np.random.choice(len(x))))
-        current_train_data = current_train_data.reset_index(drop=True)
+        #current_train_data = train_data.groupby('video_path').apply(lambda x: x.ix(np.random.choice(len(x))))
+        #current_train_data = current_train_data.reset_index(drop=True)
+
+        current_train_data = train_data.sample(frac=1).reset_index(drop=True)
 
         for start,end in zip(
                 range(0, len(current_train_data), batch_size),
@@ -264,11 +295,13 @@ def train():
                 current_feats[ind][:len(current_feats_vals[ind])] = feat
                 current_video_masks[ind][:len(current_feats_vals[ind])] = 1
 
-            current_captions = current_batch['Description'].values
-            current_caption_ind = map(lambda cap: [wordtoix[word] for word in cap.lower().split(' ')[:-1] if word in wordtoix], current_captions)
+            current_captions = current_batch[ 'Description' ].values
+            for idx, cc in enumerate( current_captions ):
+                current_captions[idx] = cc.replace('.', '').replace(',', '')
+            current_captions_ind  = map( lambda cap : [ wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix], current_captions )
 
-            current_caption_matrix = sequence.pad_sequences(current_caption_ind, padding='post', maxlen=n_frame_step-1)
-            current_caption_matrix = np.hstack( [current_caption_matrix, np.zeros( [len(current_caption_matrix),1]) ] ).astype(int)
+            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=n_frame_step-1)
+            current_caption_matrix = np.hstack( [current_caption_matrix, np.zeros( [len(current_caption_matrix), 1]) ] ).astype(int)
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
             nonzeros = np.array( map(lambda x: (x != 0).sum()+1, current_caption_matrix ))
 
@@ -293,6 +326,7 @@ def train():
         if np.mod(epoch, 100) == 0:
             print "Epoch ", epoch, " is done. Saving the model ..."
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
+
 
 def test(model_path='models/model-900', video_feat_path=video_feat_path):
 
@@ -332,3 +366,7 @@ def test(model_path='models/model-900', video_feat_path=video_feat_path):
         ipdb.set_trace()
 
     ipdb.set_trace()
+
+
+if __name__=="__main__":
+    train()
