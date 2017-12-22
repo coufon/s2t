@@ -150,8 +150,8 @@ class Video_Caption_Generator():
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
         image_emb = tf.reshape(image_emb, [1, self.n_lstm_steps, self.dim_hidden])
 
-        state1 = tf.zeros([1, self.lstm1.state_size])
-        state2 = tf.zeros([1, self.lstm2.state_size])
+        state1 = self.lstm1.zero_state(1, dtype=tf.float32)
+        state2 = self.lstm2.zero_state(1, dtype=tf.float32)
         padding = tf.zeros([1, self.dim_hidden])
 
         generated_words = []
@@ -163,23 +163,22 @@ class Video_Caption_Generator():
             if i > 0: tf.get_variable_scope().reuse_variables()
 
             with tf.variable_scope("LSTM1"):
-                output1, state1 = self.lstm1( image_emb[:,i,:], state1 )
+                (output1, state1) = self.lstm1( image_emb[:,i,:], state1 )
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2( tf.concat(1,[padding,output1]), state2 )
+                (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
 
         for i in range(self.n_lstm_steps):
-
             tf.get_variable_scope().reuse_variables()
 
             if i == 0:
                 current_embed = tf.zeros([1, self.dim_hidden])
 
             with tf.variable_scope("LSTM1"):
-                output1, state1 = self.lstm1( padding, state1 )
+                (output1, state1) = self.lstm1( padding, state1 )
 
             with tf.variable_scope("LSTM2"):
-                output2, state2 = self.lstm2( tf.concat(1,[current_embed,output1]), state2 )
+                (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
 
             logit_words = tf.nn.xw_plus_b( output2, self.embed_word_W, self.embed_word_b)
             max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -328,7 +327,7 @@ def train():
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-900', video_feat_path=video_feat_path):
+def test(model_path='models/model-10', video_feat_path=video_feat_path):
 
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     test_videos = test_data['video_path'].unique()
@@ -369,4 +368,4 @@ def test(model_path='models/model-900', video_feat_path=video_feat_path):
 
 
 if __name__=="__main__":
-    train()
+    test()
