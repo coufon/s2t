@@ -12,9 +12,9 @@ from keras.preprocessing import sequence
 
 
 ############### Global Parameters ###############
-video_path = '/home/ubuntu/dataset/youtube_videos'
+video_path = '/home/eric/dataset/youtube_videos'
 video_data_path='./data/video_corpus.csv'
-video_feat_path = '/home/ubuntu/dataset/youtube_feats'
+video_feat_path = '/home/eric/dataset/youtube_feats'
 
 model_path = './models/'
 ############## Train Parameters #################
@@ -35,7 +35,7 @@ class Video_Caption_Generator():
         self.batch_size = batch_size
         self.n_lstm_steps = n_lstm_steps
 
-        with tf.device("/gpu:0"):
+        with tf.device("/cpu:0"):
             self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
 
         self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
@@ -76,8 +76,8 @@ class Video_Caption_Generator():
         loss = 0.0
 
         with tf.variable_scope(tf.get_variable_scope()) as scope:
-
-            for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
+	    # Phase 1 => only read frames
+            for i in xrange(self.n_lstm_steps): 
                 if i > 0:
                     tf.get_variable_scope().reuse_variables()
                 with tf.variable_scope("LSTM1"):
@@ -85,17 +85,43 @@ class Video_Caption_Generator():
                 with tf.variable_scope("LSTM2"):
                     (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
 
-            for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
-                if i == 0:
-                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
-                else:
-                    with tf.device("/gpu:0"):
-                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+            # Phase 2 => only generate captions
+            output1_list = list()
+            for i in xrange(self.n_lstm_steps):
                 tf.get_variable_scope().reuse_variables()
                 with tf.variable_scope("LSTM1"):
                     (output1, state1) = self.lstm1( padding, state1 )
+                    output1_list.append(output1)
+
+            for i in xrange(self.n_lstm_steps):
+                if i == 0:
+                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                else:
+                    with tf.device("/cpu:0"):
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+                
+                tf.get_variable_scope().reuse_variables()
+                
+                # Attention.
+                e_exp_list = list()
+                state2_proj = tf.nn.xw_plus_b( state2.c, self.embed_att_Ua, self.embed_att_ba, 'state2_proj')
+                for output1 in output1_list:
+                    output1_proj = tf.matmul( output1, self.embed_att_Wa )
+                    e_add = tf.add(output1_proj, state2_proj)
+                    e = tf.matmul(e_add, self.embed_att_w)
+                    e_exp = tf.exp(e)
+                    e_exp_list.append(e_exp)
+                e_exp_total = tf.reduce_sum(e_exp_list, 0)
+
+                output1_weighted = list()
+                for e_exp, output1 in zip(e_exp_list, output1_list):
+                    w = tf.div(e_exp, e_exp_total)
+                    output1_weighted.append(tf.multiply(output1, w))
+                output1_weighted_sum = tf.reduce_sum(output1_weighted, 0)
+
                 with tf.variable_scope("LSTM2"):
-                    (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+                    (output2, state2) = self.lstm2( tf.concat([current_embed, output1_weighted_sum], 1), state2 )
+
                 labels = tf.expand_dims(caption[:,i], 1)
                 indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
                 concated = tf.concat([indices, labels], 1)
@@ -376,4 +402,4 @@ def test(model_path='models/model-10', video_feat_path=video_feat_path):
 
 
 if __name__=="__main__":
-    test()
+    train()
