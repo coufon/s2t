@@ -44,11 +44,18 @@ class Video_Caption_Generator():
         self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
         self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
 
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1,0.1), name='embed_word_W')
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
         if bias_init_vector is not None:
             self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
         else:
             self.embed_word_b = tf.Variable(tf.zeros([n_words]), name='embed_word_b')
+
+        # Attention.
+        self.embed_att_w = tf.Variable(tf.random_uniform([dim_hidden, 1], -0.1, 0.1), name='embed_att_w')
+        self.embed_att_Wa = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden], -0.1, 0.1), name='embed_att_Wa')
+        self.embed_att_Ua = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden],-0.1, 0.1), name='embed_att_Ua')
+        self.embed_att_ba = tf.Variable( tf.zeros([dim_hidden]), name='embed_att_ba')       
+
 
     def build_model(self):
         video = tf.placeholder(tf.float32, [self.batch_size, self.n_lstm_steps, self.dim_image])
@@ -69,13 +76,6 @@ class Video_Caption_Generator():
         loss = 0.0
 
         with tf.variable_scope(tf.get_variable_scope()) as scope:
-            #image_emb_seq = tf.unstack(image_emb, self.n_lstm_steps, 1)
-
-            #with tf.variable_scope("LSTM1"):
-            #    output1, _ = rnn.static_rnn(self.lstm1, image_emb_seq, dtype=tf.float32)
-
-            #with tf.variable_scope("LSTM2"):
-            #    output2, _ = rnn.static_rnn(self.lstm2, [tf.concat([padding, output], 1) for output in output1], dtype=tf.float32)
 
             for i in range(self.n_lstm_steps): ## Phase 1 => only read frames
                 if i > 0:
@@ -84,6 +84,39 @@ class Video_Caption_Generator():
                     (output1, state1) = self.lstm1( image_emb[:, i, :], state1 )
                 with tf.variable_scope("LSTM2"):
                     (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
+
+            for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
+                if i == 0:
+                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                else:
+                    with tf.device("/gpu:0"):
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
+                tf.get_variable_scope().reuse_variables()
+                with tf.variable_scope("LSTM1"):
+                    (output1, state1) = self.lstm1( padding, state1 )
+                with tf.variable_scope("LSTM2"):
+                    (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+                labels = tf.expand_dims(caption[:,i], 1)
+                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
+                concated = tf.concat([indices, labels], 1)
+                onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+                logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
+                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+                cross_entropy = cross_entropy * caption_mask[:, i]
+                probs.append(logit_words)
+                current_loss = tf.reduce_sum(cross_entropy)
+                loss += current_loss
+
+        loss = loss / tf.reduce_sum(caption_mask)
+        return loss, video, video_mask, caption, caption_mask, probs
+
+            #image_emb_seq = tf.unstack(image_emb, self.n_lstm_steps, 1)
+
+            #with tf.variable_scope("LSTM1"):
+            #    output1, _ = rnn.static_rnn(self.lstm1, image_emb_seq, dtype=tf.float32)
+
+            #with tf.variable_scope("LSTM2"):
+            #    output2, _ = rnn.static_rnn(self.lstm2, [tf.concat([padding, output], 1) for output in output1], dtype=tf.float32)
 
             # Each video might have different length. Need to mask those.
             # But how? Padding with 0 would be enough?
@@ -114,32 +147,7 @@ class Video_Caption_Generator():
             #    probs.append(logit_words)
 
             #    current_loss = tf.reduce_sum(cross_entropy)
-            #    loss += current_loss               
-
-            for i in range(self.n_lstm_steps): ## Phase 2 => only generate captions
-                if i == 0:
-                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
-                else:
-                    with tf.device("/gpu:0"):
-                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
-                tf.get_variable_scope().reuse_variables()
-                with tf.variable_scope("LSTM1"):
-                    (output1, state1) = self.lstm1( padding, state1 )
-                with tf.variable_scope("LSTM2"):
-                    (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
-                labels = tf.expand_dims(caption[:,i], 1)
-                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-                concated = tf.concat([indices, labels], 1)
-                onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
-                logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
-                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
-                cross_entropy = cross_entropy * caption_mask[:, i]
-                probs.append(logit_words)
-                current_loss = tf.reduce_sum(cross_entropy)
-                loss += current_loss
-
-        loss = loss / tf.reduce_sum(caption_mask)
-        return loss, video, video_mask, caption, caption_mask, probs
+            #    loss += current_loss
 
 
     def build_generator(self):
