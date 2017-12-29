@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import os
 import ipdb
+import matplotlib.pyplot as plt
 
 import cv2
 
@@ -12,15 +13,15 @@ from keras.preprocessing import sequence
 
 
 ############### Global Parameters ###############
-video_path = '/home/eric/dataset/youtube_videos'
+video_path = '/home/ubuntu/dataset/youtube_videos'
 video_data_path='./data/video_corpus.csv'
-video_feat_path = '/home/eric/dataset/youtube_feats'
+video_feat_path = '/home/ubuntu/dataset/youtube_feats'
 
 model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
 dim_hidden= 256
-n_frame_step = 80
+n_frame_step = 30
 n_epochs = 1000
 batch_size = 128
 learning_rate = 0.001
@@ -35,7 +36,7 @@ class Video_Caption_Generator():
         self.batch_size = batch_size
         self.n_lstm_steps = n_lstm_steps
 
-        with tf.device("/cpu:0"):
+        with tf.device("/gpu:0"):
             self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
 
         self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
@@ -97,7 +98,7 @@ class Video_Caption_Generator():
                 if i == 0:
                     current_embed = tf.zeros([self.batch_size, self.dim_hidden])
                 else:
-                    with tf.device("/cpu:0"):
+                    with tf.device("/gpu:0"):
                         current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:,i-1])
                 
                 tf.get_variable_scope().reuse_variables()
@@ -188,10 +189,9 @@ class Video_Caption_Generator():
         state2 = self.lstm2.zero_state(1, dtype=tf.float32)
         padding = tf.zeros([1, self.dim_hidden])
 
-        generated_words = []
-
-        probs = []
-        embeds = []
+        generated_words = list()
+        probs = list()
+        embeds = list()
 
         for i in range(self.n_lstm_steps):
             if i > 0: tf.get_variable_scope().reuse_variables()
@@ -202,17 +202,42 @@ class Video_Caption_Generator():
             with tf.variable_scope("LSTM2"):
                 (output2, state2) = self.lstm2( tf.concat([padding, output1], 1), state2 )
 
+        output1_list = list()
+        for i in xrange(self.n_lstm_steps):
+            tf.get_variable_scope().reuse_variables()
+            with tf.variable_scope("LSTM1"):
+                (output1, state1) = self.lstm1( padding, state1 )
+                output1_list.append(output1)
+
+        w_all_all = []
         for i in range(self.n_lstm_steps):
             tf.get_variable_scope().reuse_variables()
 
             if i == 0:
                 current_embed = tf.zeros([1, self.dim_hidden])
 
-            with tf.variable_scope("LSTM1"):
-                (output1, state1) = self.lstm1( padding, state1 )
+            # Attention.
+            e_exp_list = list()
+            state2_proj = tf.nn.xw_plus_b( state2.c, self.embed_att_Ua, self.embed_att_ba, 'state2_proj')
+            for output1 in output1_list:
+                output1_proj = tf.matmul( output1, self.embed_att_Wa )
+                e_add = tf.add(output1_proj, state2_proj)
+                e = tf.matmul(e_add, self.embed_att_w)
+                e_exp = tf.exp(e)
+                e_exp_list.append(e_exp)
+            e_exp_total = tf.reduce_sum(e_exp_list, 0)
+
+            output1_weighted = list()
+            w_all = []
+            for e_exp, output1 in zip(e_exp_list, output1_list):
+                w = tf.div(e_exp, e_exp_total)
+                w_all.append(w)
+                output1_weighted.append(tf.multiply(output1, w))
+            output1_weighted_sum = tf.reduce_sum(output1_weighted, 0)
+            w_all_all.append(w_all)
 
             with tf.variable_scope("LSTM2"):
-                (output2, state2) = self.lstm2( tf.concat([current_embed, output1], 1), state2 )
+                (output2, state2) = self.lstm2( tf.concat([current_embed, output1_weighted_sum], 1), state2 )
 
             logit_words = tf.nn.xw_plus_b( output2, self.embed_word_W, self.embed_word_b)
             max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -225,7 +250,7 @@ class Video_Caption_Generator():
 
             embeds.append(current_embed)
 
-        return video, video_mask, generated_words, probs, embeds
+        return video, video_mask, generated_words, probs, embeds, w_all_all
 
 
 def get_video_data(video_data_path, video_feat_path, train_ratio=0.9):
@@ -324,8 +349,9 @@ def train():
 
             current_video_masks = np.zeros((batch_size, n_frame_step))
 
-            for ind,feat in enumerate(current_feats_vals):
-                current_feats[ind][:len(current_feats_vals[ind])] = feat
+            for ind, feat in enumerate(current_feats_vals):
+                interval_frame = feat.shape[0]/n_frame_step
+                current_feats[ind][:len(current_feats_vals[ind])] = feat[range(0, n_frame_step*interval_frame, interval_frame), :]
                 current_video_masks[ind][:len(current_feats_vals[ind])] = 1
 
             current_captions = current_batch[ 'Description' ].values
@@ -341,10 +367,10 @@ def train():
             for ind, row in enumerate(current_caption_masks):
                 row[:nonzeros[ind]] = 1
 
-            probs_val = sess.run(tf_probs, feed_dict={
-                tf_video:current_feats,
-                tf_caption: current_caption_matrix
-                })
+            #probs_val = sess.run(tf_probs, feed_dict={
+            #    tf_video:current_feats,
+            #    tf_caption: current_caption_matrix
+            #    })
 
             _, loss_val = sess.run(
                     [train_op, tf_loss],
@@ -356,12 +382,12 @@ def train():
                         })
 
             print loss_val
-        if np.mod(epoch, 100) == 0:
+        if np.mod(epoch, 1) == 0:
             print "Epoch ", epoch, " is done. Saving the model ..."
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-10', video_feat_path=video_feat_path):
+def test(model_path='models/model-33', video_feat_path=video_feat_path):
 
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     test_videos = test_data['video_path'].unique()
@@ -375,7 +401,7 @@ def test(model_path='models/model-10', video_feat_path=video_feat_path):
             n_lstm_steps=n_frame_step,
             bias_init_vector=None)
 
-    video_tf, video_mask_tf, caption_tf, probs_tf, last_embed_tf = model.build_generator()
+    video_tf, video_mask_tf, caption_tf, probs_tf, last_embed_tf, w_all_tf = model.build_generator()
     sess = tf.InteractiveSession()
 
     saver = tf.train.Saver()
@@ -383,23 +409,30 @@ def test(model_path='models/model-10', video_feat_path=video_feat_path):
 
     for video_feat_path in test_videos:
         print video_feat_path
-        video_feat = np.load(video_feat_path)[None,...]
+        video_feat = np.load(video_feat_path)[None, ...]
+        interval_frame = video_feat.shape[1]/n_frame_step
+        video_feat = video_feat[:, range(0, n_frame_step*interval_frame, interval_frame), :]
         video_mask = np.ones((video_feat.shape[0], video_feat.shape[1]))
 
-        generated_word_index = sess.run(caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
-        probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
-        embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
+        generated_word_index, w_all = sess.run([caption_tf, w_all_tf], feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
+        #probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
+        #embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
         generated_words = ixtoword[generated_word_index]
 
-        punctuation = np.argmax(np.array(generated_words) == '.')+1
+        punctuation = np.argmax(np.array(generated_words) == '.') + 1
         generated_words = generated_words[:punctuation]
 
         generated_sentence = ' '.join(generated_words)
         print generated_sentence
+        for i in range(0, 10, 1):
+            w = w_all[i*3]
+            plt.subplot(10, 1, i+1)
+            plt.plot(range(len(w)), [ww[0][0] for ww in w], 'b')
+        plt.show()
         ipdb.set_trace()
 
     ipdb.set_trace()
 
 
 if __name__=="__main__":
-    train()
+    test()
