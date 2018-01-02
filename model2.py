@@ -21,7 +21,8 @@ model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
 dim_hidden= 512
-n_frame_step = 80
+encoder_step = 80
+decoder_step = 30
 n_epochs = 1000
 batch_size = 128
 chunk_len = 8
@@ -246,8 +247,8 @@ def train():
             n_words=len(wordtoix),
             dim_hidden=dim_hidden,
             batch_size=batch_size,
-            encoder_max_sequence_length=n_frame_step,
-            decoder_max_sentence_length=n_frame_step,
+            encoder_max_sequence_length=encoder_step,
+            decoder_max_sentence_length=decoder_step,
             bias_init_vector=bias_init_vector)
 
     tf_loss, tf_video, tf_video_mask, tf_caption, tf_caption_mask, tf_probs = model.build_model()
@@ -340,8 +341,8 @@ def test(model_path='models/model-37', video_feat_path=video_feat_path):
             n_words=len(ixtoword),
             dim_hidden=dim_hidden,
             batch_size=batch_size,
-            encoder_max_sequence_length=n_frame_step,
-            decoder_max_sentence_length=n_frame_step,
+            encoder_max_sequence_length=encoder_step,
+            decoder_max_sentence_length=decoder_step,
             bias_init_vector=None)
 
     video_tf, video_mask_tf, caption_tf, probs_tf, last_embed_tf = model.build_generator()
