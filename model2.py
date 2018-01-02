@@ -275,10 +275,10 @@ def train():
             current_batch = current_train_data[start:end]
             current_videos = current_batch['video_path'].values
 
-            current_feats = np.zeros((batch_size, n_frame_step, dim_image))
+            current_feats = np.zeros((batch_size, encoder_step, dim_image))
             current_feats_vals = map(lambda vid: np.load(vid), current_videos)
 
-            current_video_masks = np.zeros((batch_size, n_frame_step))
+            current_video_masks = np.zeros((batch_size, encoder_step))
 
             for ind, feat in enumerate(current_feats_vals):
                 #interval_frame = max(feat.shape[0]/n_frame_step, 1)
@@ -292,7 +292,7 @@ def train():
                 current_captions[idx] = cc.replace('.', '').replace(',', '')
             current_captions_ind  = map( lambda cap : [ wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix], current_captions )
 
-            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=n_frame_step-1)
+            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=encoder_step-1)
             current_caption_matrix = np.hstack( [current_caption_matrix, np.zeros( [len(current_caption_matrix), 1]) ] ).astype(int)
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
             nonzeros = np.array( map(lambda x: (x != 0).sum()+1, current_caption_matrix ))
@@ -358,9 +358,9 @@ def test(model_path='models/model-37', video_feat_path=video_feat_path):
     for (video_feat_path, caption) in zip(test_videos_unique, test_captions_list):
         print video_feat_path
         print caption
-        video_feat = np.load(video_feat_path)[None,...]
-        interval_frame = video_feat.shape[1]/n_frame_step
-        video_feat = video_feat[:, range(0, n_frame_step*interval_frame, interval_frame), :]
+        video_feat = np.load(video_feat_path)[None, ...]
+        #interval_frame = video_feat.shape[1]/encoder_step
+        #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
         video_mask = np.ones((video_feat.shape[0], video_feat.shape[1]))
 
         #video_feat = sampling(video_feat, 0.3)
