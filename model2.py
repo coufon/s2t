@@ -292,7 +292,7 @@ def train():
                 current_captions[idx] = cc.replace('.', '').replace(',', '')
             current_captions_ind  = map( lambda cap : [ wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix], current_captions )
 
-            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=encoder_step-1)
+            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=decoder_step-1)
             current_caption_matrix = np.hstack( [current_caption_matrix, np.zeros( [len(current_caption_matrix), 1]) ] ).astype(int)
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
             nonzeros = np.array( map(lambda x: (x != 0).sum()+1, current_caption_matrix ))
