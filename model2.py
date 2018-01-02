@@ -21,9 +21,10 @@ model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
 dim_hidden= 256
-n_frame_step = 20
+n_frame_step = 80
 n_epochs = 1000
 batch_size = 128
+chunk_len = 8
 learning_rate = 0.001
 ##################################################
 
@@ -39,13 +40,14 @@ class Video_Caption_Generator():
         self.encoder_max_sequence_length = encoder_max_sequence_length
         self.decoder_max_sentence_length = decoder_max_sentence_length
 
-        with tf.device("/cpu:0"):
-            self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
+        #with tf.device("/cpu:0"):
+        self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
 
         #self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
         #self.lstm2 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
 
-        self.encoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
+        self.encoder_bottom = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
+        self.encoder_top = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
         self.decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
 
         self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
@@ -75,8 +77,9 @@ class Video_Caption_Generator():
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
         image_emb = tf.reshape(image_emb, [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
-        state1 = self.encoder.zero_state(self.batch_size, dtype=tf.float32)
-        state2 = self.decoder.zero_state(self.batch_size, dtype=tf.float32)
+        #state_encoder_bottom = self.encoder_bottom.zero_state(self.batch_size, dtype=tf.float32)
+        #state_encoder_top = self.encoder_top.zero_state(self.batch_size, dtype=tf.float32)
+        #state_decoder = self.decoder.zero_state(self.batch_size, dtype=tf.float32)
         padding = tf.zeros([self.batch_size, self.dim_hidden])
 
         probs = list()
@@ -84,25 +87,35 @@ class Video_Caption_Generator():
 
 	    # Phase 1 => only read frames
         #image_emb_seq = tf.unstack(image_emb, self.encoder_max_sequence_length, 1)
-        _, state1 = tf.nn.dynamic_rnn(
-            cell=self.encoder,
-            inputs=image_emb,
-            dtype=tf.float32)
+        with tf.variable_scope("Encoder_bottom"):
+            outputs1, _ = tf.nn.dynamic_rnn(
+                cell=self.encoder_bottom,
+                inputs=image_emb,
+                dtype=tf.float32)
+
+        with tf.variable_scope("Encoder_top"):
+            _, state1 = tf.nn.dynamic_rnn(
+                cell=self.encoder_top,
+                inputs=tf.stack(
+                    [outputs1[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
+                    axis=1),
+                dtype=tf.float32)
 
         # Phase 2 => only generate captions
         current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
-            tf.nn.embedding_lookup(self.Wemb, caption[:,i-1]) for i in xrange(self.decoder_max_sentence_length)]
+            tf.nn.embedding_lookup(self.Wemb, caption[:,i]) for i in xrange(self.decoder_max_sentence_length-1)]
 
-        outputs2, _ = tf.nn.dynamic_rnn(
-            cell=self.decoder,
-            inputs=tf.stack(current_embeds, axis=1),
-            initial_state=state1,
-            dtype=tf.float32)       
+        with tf.variable_scope("Decoder"):
+            outputs2, _ = tf.nn.dynamic_rnn(
+                cell=self.decoder,
+                inputs=tf.stack(current_embeds, axis=1),
+                initial_state=state1,
+                dtype=tf.float32)       
 
         for i in xrange(self.decoder_max_sentence_length):
-            output2 = outputs2[i]
+            output2 = outputs2[:, i, :]
 
-            labels = tf.expand_dims(caption[:,i], 1)
+            labels = tf.expand_dims(caption[:, i], 1)
             indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
             concated = tf.concat([indices, labels], 1)
             onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
@@ -129,10 +142,35 @@ class Video_Caption_Generator():
         state2 = self.decoder.zero_state(1, dtype=tf.float32)
         padding = tf.zeros([1, self.dim_hidden])
 
-        generated_words = []
+        generated_words = list()
+        probs = list()
+        embeds = list()
 
-        probs = []
-        embeds = []
+	    # Phase 1 => only read frames
+        with tf.variable_scope("Encoder_bottom"):
+            outputs1, _ = tf.nn.dynamic_rnn(
+                cell=self.encoder_bottom,
+                inputs=image_emb,
+                dtype=tf.float32)
+
+        with tf.variable_scope("Encoder_top"):
+            _, state1 = tf.nn.dynamic_rnn(
+                cell=self.encoder_top,
+                inputs=tf.stack(
+                    [outputs1[:, i, :] for i in range(chunk_len, self.encoder_max_sequence_length+1, chunk_len)],
+                    axis=1),
+                dtype=tf.float32)
+
+        # Phase 2 => only generate captions
+        current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
+            tf.nn.embedding_lookup(self.Wemb, caption[:,i]) for i in xrange(self.decoder_max_sentence_length-1)]
+
+        with tf.variable_scope("Decoder"):
+            outputs2, _ = tf.nn.dynamic_rnn(
+                cell=self.decoder,
+                inputs=tf.stack(current_embeds, axis=1),
+                initial_state=state1,
+                dtype=tf.float32)  
 
         output1_list = list()
         with tf.variable_scope("Encoder"):
@@ -264,10 +302,10 @@ def train():
             current_video_masks = np.zeros((batch_size, n_frame_step))
 
             for ind, feat in enumerate(current_feats_vals):
-                interval_frame = feat.shape[0]/n_frame_step
-                current_feats[ind][:len(current_feats_vals[ind])] = feat[
-                    range(0, n_frame_step*interval_frame, interval_frame), :]
-                #current_feats[ind][:len(current_feats_vals[ind])] = feat
+                #interval_frame = max(feat.shape[0]/n_frame_step, 1)
+                #current_feats[ind][:len(current_feats_vals[ind])] = feat[
+                #    range(0, min(n_frame_step*interval_frame, max(feat.shape[0]), interval_frame), :]
+                current_feats[ind][:len(current_feats_vals[ind])] = feat
                 current_video_masks[ind][:len(current_feats_vals[ind])] = 1
 
             current_captions = current_batch[ 'Description' ].values
