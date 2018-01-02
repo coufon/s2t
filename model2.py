@@ -20,12 +20,12 @@ video_feat_path = './dataset/youtube_feats'
 model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
-dim_hidden= 256
+dim_hidden= 512
 n_frame_step = 80
 n_epochs = 1000
 batch_size = 128
 chunk_len = 8
-learning_rate = 0.001
+learning_rate = 0.0002
 ##################################################
 
 
@@ -94,7 +94,7 @@ class Video_Caption_Generator():
                 dtype=tf.float32)
 
         with tf.variable_scope("Encoder_top"):
-            _, state1 = tf.nn.dynamic_rnn(
+            outputs2, state1 = tf.nn.dynamic_rnn(
                 cell=self.encoder_top,
                 inputs=tf.stack(
                     [outputs1[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
@@ -112,7 +112,7 @@ class Video_Caption_Generator():
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
-                (output2, state2) = self.decoder(current_embed, state2)
+                (output2, state2) = self.decoder(tf.concat([current_embed, outputs2[:, -1, :]], 1), state2)
 
                 labels = tf.expand_dims(caption[:, i], 1)
                 indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
@@ -153,7 +153,7 @@ class Video_Caption_Generator():
                 dtype=tf.float32)
 
         with tf.variable_scope("Encoder_top"):
-            _, state1 = tf.nn.dynamic_rnn(
+            outputs2, state1 = tf.nn.dynamic_rnn(
                 cell=self.encoder_top,
                 inputs=tf.stack(
                     [outputs1[:, i, :] for i in range(chunk_len, self.encoder_max_sequence_length+1, chunk_len)],
@@ -171,7 +171,7 @@ class Video_Caption_Generator():
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
 
-                (output2, state2) = self.decoder(current_embed, state2)
+                (output2, state2) = self.decoder(tf.concat([current_embed, outputs2[:, -1, :]], 1), state2)
 
                 logit_words = tf.nn.xw_plus_b( output2, self.embed_word_W, self.embed_word_b)
                 max_prob_index = tf.argmax(logit_words, 1)[0]
