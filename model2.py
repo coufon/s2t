@@ -102,29 +102,28 @@ class Video_Caption_Generator():
                 dtype=tf.float32)
 
         # Phase 2 => only generate captions
-        current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
-            tf.nn.embedding_lookup(self.Wemb, caption[:,i]) for i in xrange(self.decoder_max_sentence_length-1)]
+        state2 = state1
 
         with tf.variable_scope("Decoder"):
-            outputs2, _ = tf.nn.dynamic_rnn(
-                cell=self.decoder,
-                inputs=tf.stack(current_embeds, axis=1),
-                initial_state=state1,
-                dtype=tf.float32)       
+            for i in range(self.decoder_max_sentence_length):
+                if i == 0:
+                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                else:
+                    tf.get_variable_scope().reuse_variables()
+                    current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
-        for i in xrange(self.decoder_max_sentence_length):
-            output2 = outputs2[:, i, :]
+                (output2, state2) = self.decoder(current_embed, state2)
 
-            labels = tf.expand_dims(caption[:, i], 1)
-            indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-            concated = tf.concat([indices, labels], 1)
-            onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
-            logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
-            cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
-            cross_entropy = cross_entropy * caption_mask[:, i]
-            probs.append(logit_words)
-            current_loss = tf.reduce_sum(cross_entropy)
-            loss += current_loss
+                labels = tf.expand_dims(caption[:, i], 1)
+                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
+                concated = tf.concat([indices, labels], 1)
+                onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
+                logit_words = tf.nn.xw_plus_b(output2, self.embed_word_W, self.embed_word_b)
+                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+                cross_entropy = cross_entropy * caption_mask[:, i]
+                probs.append(logit_words)
+                current_loss = tf.reduce_sum(cross_entropy)
+                loss += current_loss
 
         loss = loss / tf.reduce_sum(caption_mask)
         return loss, video, video_mask, caption, caption_mask, probs
@@ -162,25 +161,6 @@ class Video_Caption_Generator():
                 dtype=tf.float32)
 
         # Phase 2 => only generate captions
-        current_embeds = [tf.zeros([self.batch_size, self.dim_hidden])] + [
-            tf.nn.embedding_lookup(self.Wemb, caption[:,i]) for i in xrange(self.decoder_max_sentence_length-1)]
-
-        with tf.variable_scope("Decoder"):
-            outputs2, _ = tf.nn.dynamic_rnn(
-                cell=self.decoder,
-                inputs=tf.stack(current_embeds, axis=1),
-                initial_state=state1,
-                dtype=tf.float32)  
-
-        output1_list = list()
-        with tf.variable_scope("Encoder"):
-            for i in range(self.encoder_max_sequence_length):
-                if i > 0:
-                    tf.get_variable_scope().reuse_variables()
-            
-                (output1, state1) = self.encoder( image_emb[:,i,:], state1 )
-                output1_list.append(output1)
-
         state2 = state1
 
         with tf.variable_scope("Decoder"):
@@ -189,11 +169,9 @@ class Video_Caption_Generator():
                     current_embed = tf.zeros([1, self.dim_hidden])
                 else:
                     tf.get_variable_scope().reuse_variables()
-                    with tf.device("/cpu:0"):
-                        current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
-                        current_embed = tf.expand_dims(current_embed, 0)
+                    current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
 
-                (output2, state2) = self.decoder( tf.concat([current_embed, output1_list[i]], 1), state2 )
+                (output2, state2) = self.decoder(current_embed, state2)
 
                 logit_words = tf.nn.xw_plus_b( output2, self.embed_word_W, self.embed_word_b)
                 max_prob_index = tf.argmax(logit_words, 1)[0]
