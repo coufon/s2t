@@ -375,12 +375,12 @@ def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixt
     video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
 
     feat = np.load(video_feat_path)[None, ...]
-    video_feat[1, :feat.shape[1], :] = feat
+    video_feat[0, :feat.shape[1], :] = feat
     video_mask[:feat.shape[1], :] = 1
 
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-    #video_feat = sampling(video_feat, 0.3)
+    video_feat = sampling(video_feat, 0.2)
 
     generated_word_index = sess.run(
         caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
