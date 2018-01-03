@@ -105,6 +105,11 @@ class Video_Caption_Generator():
         # Phase 2 => only generate captions
         state_decoder = state_encoder
 
+        # Attention
+        outputs_top_proj = [
+            tf.nn.xw_plus_b(outputs_top[:, i, :], self.embed_att_Wa, self.embed_att_ba) \
+                for i in range(outputs_top.shape[1])]
+
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
@@ -113,7 +118,21 @@ class Video_Caption_Generator():
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
-                (output_decoder, state_decoder) = self.decoder(tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
+                # Attention.
+                state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
+                e_exp_list = [
+                    tf.exp(tf.matmul(tf.add(output_top_proj, state_proj), self.embed_att_w)) \
+                        for output_top_proj in outputs_top_proj]
+                e_exp_total = tf.reduce_sum(e_exp_list, 0)
+
+                output_top_weighted = [
+                    tf.multiply(output_top, tf.div(e_exp, e_exp_total)) \
+                        for e_exp, output_top in zip(e_exp_list, outputs_top_proj)]
+                output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
+
+                (output_decoder, state_decoder) = self.decoder(
+                    #tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
+                    tf.concat([current_embed, output_top_weighted_sum], 1), state_decoder)
 
                 labels = tf.expand_dims(caption[:, i], 1)
                 indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
@@ -289,12 +308,15 @@ def train():
             current_captions = current_batch[ 'Description' ].values
             for idx, cc in enumerate( current_captions ):
                 current_captions[idx] = cc.replace('.', '').replace(',', '')
-            current_captions_ind  = map( lambda cap : [ wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix], current_captions )
+            current_captions_ind  = map(
+                lambda cap : [wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix],
+                current_captions)
 
             current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=decoder_step-1)
-            current_caption_matrix = np.hstack( [current_caption_matrix, np.zeros( [len(current_caption_matrix), 1]) ] ).astype(int)
+            current_caption_matrix = np.hstack(
+                [current_caption_matrix, np.zeros([len(current_caption_matrix), 1])]).astype(int)
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
-            nonzeros = np.array( map(lambda x: (x != 0).sum()+1, current_caption_matrix ))
+            nonzeros = np.array(map(lambda x: (x != 0).sum()+1, current_caption_matrix))
 
             for ind, row in enumerate(current_caption_masks):
                 row[:nonzeros[ind]] = 1
@@ -380,7 +402,7 @@ def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixt
 
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-    video_feat = sampling(video_feat, 0.2)
+    #video_feat = sampling(video_feat, 0.2)
 
     generated_word_index = sess.run(
         caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
@@ -404,4 +426,4 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    test()
+    train()
