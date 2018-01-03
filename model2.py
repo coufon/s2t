@@ -136,10 +136,8 @@ class Video_Caption_Generator():
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
-        image_emb = tf.reshape(image_emb, [1, self.decoder_max_sentence_length, self.dim_hidden])
+        image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_hidden])
 
-        state1 = self.encoder.zero_state(1, dtype=tf.float32)
-        state2 = self.decoder.zero_state(1, dtype=tf.float32)
         padding = tf.zeros([1, self.dim_hidden])
 
         generated_words = list()
@@ -157,7 +155,7 @@ class Video_Caption_Generator():
             outputs_top, state_encoder = tf.nn.dynamic_rnn(
                 cell=self.encoder_top,
                 inputs=tf.stack(
-                    [outputs_bottom[:, i, :] for i in range(chunk_len, self.encoder_max_sequence_length+1, chunk_len)],
+                    [outputs_bottom[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
                     axis=1),
                 dtype=tf.float32)
 
@@ -171,6 +169,7 @@ class Video_Caption_Generator():
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
+                    current_embed = tf.expand_dims(current_embed, 0)
 
                 (output_decoder, state_decoder) = self.decoder(tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
 
@@ -320,7 +319,7 @@ def train():
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-37', video_feat_path=video_feat_path):
+def test(model_path='models/model-115', video_feat_path=video_feat_path):
 
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     test_videos = test_data['video_path'].values
@@ -399,4 +398,4 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    train()
+    test()
