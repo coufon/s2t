@@ -81,7 +81,7 @@ class Video_Caption_Generator():
         #state_encoder_bottom = self.encoder_bottom.zero_state(self.batch_size, dtype=tf.float32)
         #state_encoder_top = self.encoder_top.zero_state(self.batch_size, dtype=tf.float32)
         #state_decoder = self.decoder.zero_state(self.batch_size, dtype=tf.float32)
-        padding = tf.zeros([self.batch_size, self.dim_hidden])
+        #padding = tf.zeros([self.batch_size, self.dim_hidden])
 
         probs = list()
         loss = 0.0
@@ -138,7 +138,7 @@ class Video_Caption_Generator():
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
         image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_hidden])
 
-        padding = tf.zeros([1, self.dim_hidden])
+        #padding = tf.zeros([1, self.dim_hidden])
 
         generated_words = list()
         probs = list()
@@ -319,7 +319,7 @@ def train():
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-115', video_feat_path=video_feat_path):
+def test(model_path='models/model-122', video_feat_path=video_feat_path):
 
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     test_videos = test_data['video_path'].values
@@ -370,10 +370,15 @@ def test(model_path='models/model-115', video_feat_path=video_feat_path):
 
 
 def gen_sentence(model, video_feat_path, ixtoword):
-    video_feat = np.load(video_feat_path)[None, ...]
+    video_feat = np.zeros((1, encoder_step, dim_image))
+    video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
+
+    feat = np.load(video_feat_path)[None, ...]
+    video_feat[1, :feat.shape[1], :] = feat
+    video_mask[:feat.shape[1], :] = 1
+
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-    video_mask = np.ones((video_feat.shape[0], video_feat.shape[1]))
     #video_feat = sampling(video_feat, 0.3)
 
     generated_word_index = sess.run(
