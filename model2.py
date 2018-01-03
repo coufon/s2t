@@ -355,7 +355,8 @@ def test(model_path='models/model-122', video_feat_path=video_feat_path):
     RES = dict()
 
     for (video_feat_path, caption) in zip(test_videos_unique, test_captions_list):
-        generated_sentence = gen_sentence(caption_tf, video_feat_path, ixtoword)
+        generated_sentence = gen_sentence(
+            sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixtoword)
         print video_feat_path, generated_sentence
         #print caption
 
@@ -369,7 +370,7 @@ def test(model_path='models/model-122', video_feat_path=video_feat_path):
     #ipdb.set_trace()
 
 
-def gen_sentence(model, video_feat_path, ixtoword):
+def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixtoword):
     video_feat = np.zeros((1, encoder_step, dim_image))
     video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
 
