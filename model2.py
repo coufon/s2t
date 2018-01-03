@@ -355,38 +355,38 @@ def test(model_path='models/model-115', video_feat_path=video_feat_path):
     RES = dict()
 
     for (video_feat_path, caption) in zip(test_videos_unique, test_captions_list):
-        print video_feat_path
-        print caption
-        video_feat = np.load(video_feat_path)[None, ...]
-        #interval_frame = video_feat.shape[1]/encoder_step
-        #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-        video_mask = np.ones((video_feat.shape[0], video_feat.shape[1]))
-
-        #video_feat = sampling(video_feat, 0.3)
-
-        generated_word_index = sess.run(
-            caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
-        #probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
-        #embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
-        generated_words = ixtoword[generated_word_index]
-
-        punctuation = np.argmax(np.array(generated_words) == '.')+1
-        generated_words = generated_words[:punctuation]
-
-        generated_sentence = ' '.join(generated_words)
-        print generated_sentence
+        generated_sentence = gen_sentence(caption_tf, video_feat_path, ixtoword)
+        print video_feat_path, generated_sentence
+        #print caption
 
         GTS[video_feat_path] = caption
         RES[video_feat_path] = [generated_sentence[:-2] + '.']
+        #ipdb.set_trace()
 
-        score, scores = scorer.compute_score(GTS, RES)
-        print score
+    score, scores = scorer.compute_score(GTS, RES)
+    print "METEOR", score
 
-        ipdb.set_trace()
+    #ipdb.set_trace()
 
-    print score
 
-    ipdb.set_trace()
+def gen_sentence(model, video_feat_path, ixtoword):
+    video_feat = np.load(video_feat_path)[None, ...]
+    #interval_frame = video_feat.shape[1]/encoder_step
+    #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
+    video_mask = np.ones((video_feat.shape[0], video_feat.shape[1]))
+    #video_feat = sampling(video_feat, 0.3)
+
+    generated_word_index = sess.run(
+        caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
+    #probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
+    #embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
+    generated_words = ixtoword[generated_word_index]
+
+    punctuation = np.argmax(np.array(generated_words) == '.')+1
+    generated_words = generated_words[:punctuation]
+
+    generated_sentence = ' '.join(generated_words)
+    return generated_sentence
 
 
 def sampling(video_feat, sampling_rate):
