@@ -120,14 +120,14 @@ class Video_Caption_Generator():
 
                 # Attention.
                 state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
-                e_exp_list = [
-                    tf.exp(tf.matmul(tf.add(output_top_proj, state_proj), self.embed_att_w)) \
-                        for output_top_proj in outputs_top_proj]
-                e_exp_total = tf.reduce_sum(e_exp_list, 0)
+                e_list = tf.stack([
+                    tf.matmul(tf.tanh(tf.add(output_top_proj, state_proj)), self.embed_att_w) \
+                        for output_top_proj in outputs_top_proj], axis=0)
+                weights = tf.nn.softmax(e_list, dim=0)
 
                 output_top_weighted = [
-                    tf.multiply(output_top, tf.div(e_exp, e_exp_total)) \
-                        for e_exp, output_top in zip(e_exp_list, outputs_top_proj)]
+                    tf.multiply(output_top, tf.tile(weight, [1, dim_hidden])) \
+                        for weight, output_top in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
                 output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
 
                 (output_decoder, state_decoder) = self.decoder(
@@ -272,7 +272,7 @@ def train():
     tf_loss, tf_video, tf_video_mask, tf_caption, tf_caption_mask, tf_probs = model.build_model()
     sess = tf.InteractiveSession()
 
-    saver = tf.train.Saver(max_to_keep=10)
+    saver = tf.train.Saver(max_to_keep=5)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(tf_loss)
     tf.initialize_all_variables().run()
 
