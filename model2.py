@@ -181,6 +181,11 @@ class Video_Caption_Generator():
         # Phase 2 => only generate captions
         state_decoder = state_encoder
 
+        # Attention
+        outputs_top_proj = [
+            tf.nn.xw_plus_b(outputs_top[:, i, :], self.embed_att_Wa, self.embed_att_ba) \
+                for i in range(outputs_top.shape[1])]
+
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
@@ -190,7 +195,21 @@ class Video_Caption_Generator():
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
                     current_embed = tf.expand_dims(current_embed, 0)
 
-                (output_decoder, state_decoder) = self.decoder(tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
+                # Attention.
+                state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
+                e_list = tf.stack([
+                    tf.matmul(tf.tanh(tf.add(output_top_proj, state_proj)), self.embed_att_w) \
+                        for output_top_proj in outputs_top_proj], axis=0)
+                weights = tf.nn.softmax(e_list, dim=0)
+
+                output_top_weighted = [
+                    tf.multiply(output_top, tf.tile(weight, [1, dim_hidden])) \
+                        for weight, output_top in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
+                output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
+
+                (output_decoder, state_decoder) = self.decoder(
+                    #tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
+                    tf.concat([current_embed, output_top_weighted_sum], 1), state_decoder)
 
                 logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
                 max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -341,7 +360,7 @@ def train():
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-122', video_feat_path=video_feat_path):
+def test(model_path='models/model-50', video_feat_path=video_feat_path):
 
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
     test_videos = test_data['video_path'].values
@@ -426,4 +445,4 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    train()
+    test()
