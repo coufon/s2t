@@ -297,8 +297,8 @@ def train(prev_model_path=None):
                         tf_video: current_feats,
                         tf_video_mask : current_video_masks,
                         tf_caption: current_caption_matrix,
-                        tf_caption_mask: current_caption_masks
-                        })
+                        tf_caption_mask: current_caption_masks,
+                    })
 
             print loss_val
         if np.mod(epoch, 1) == 0:
