@@ -4,12 +4,15 @@ import pandas as pd
 import numpy as np
 import os
 import ipdb
+from collections import defaultdict
 
 import cv2
 
 from tensorflow.contrib import rnn
 from keras.preprocessing import sequence
 
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from pycocoevalcap.bleu.bleu import Bleu
 from pycocoevalcap.meteor.meteor import Meteor
 
 ############### Global Parameters ###############
@@ -20,7 +23,7 @@ video_feat_path = './dataset/youtube_feats'
 model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
-dim_hidden= 512
+dim_hidden= 1024
 encoder_step = 80
 decoder_step = 30
 n_epochs = 1000
@@ -220,7 +223,7 @@ class Video_Caption_Generator():
         return video, video_mask, generated_words, probs, embeds
 
 
-def get_video_data(video_data_path, video_feat_path, train_ratio=0.9):
+def get_video_data(video_data_path, video_feat_path, train_ratio=0.7):
     video_data = pd.read_csv(video_data_path, sep=',')
     video_data = video_data[video_data['Language'] == 'English']
     video_data['video_path'] = video_data.apply(lambda row: row['VideoID']+'_'+str(row['Start'])+'_'+str(row['End'])+'.avi.npy', axis=1)
@@ -270,8 +273,8 @@ def preProBuildWordVocab(sentence_iterator, word_count_threshold=5): # borrowed 
     return wordtoix, ixtoword, bias_init_vector
 
 
-def train():
-    train_data, _ = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
+def train(prev_model_path=None):
+    train_data, _ = get_video_data(video_data_path, video_feat_path, train_ratio=0.7)
     captions = train_data['Description'].values
     captions = map(lambda x: x.replace('.', ''), captions)
     captions = map(lambda x: x.replace(',', ''), captions)
@@ -295,15 +298,16 @@ def train():
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(tf_loss)
     tf.initialize_all_variables().run()
 
+    if prev_model_path is not None:
+        saver.restore(sess, prev_model_path)
+
     for epoch in range(n_epochs):
         index = list(train_data.index)
         np.random.shuffle(index)
-        train_data = train_data.ix[index]
+        current_train_data = train_data.ix[index]
 
-        #current_train_data = train_data.groupby('video_path').apply(lambda x: x.ix(np.random.choice(len(x))))
+        #current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc(np.random.choice(len(x))))
         #current_train_data = current_train_data.reset_index(drop=True)
-
-        current_train_data = train_data.sample(frac=1).reset_index(drop=True)
 
         for start,end in zip(
                 range(0, len(current_train_data), batch_size),
@@ -323,15 +327,15 @@ def train():
                 #    range(0, min(n_frame_step*interval_frame, max(feat.shape[0]), interval_frame), :]
                 current_feats[ind][:len(current_feats_vals[ind])] = feat
                 current_video_masks[ind][:len(current_feats_vals[ind])] = 1
-
-            current_captions = current_batch[ 'Description' ].values
+            current_captions = current_batch['Description'].values
             for idx, cc in enumerate( current_captions ):
                 current_captions[idx] = cc.replace('.', '').replace(',', '')
+            
             current_captions_ind  = map(
                 lambda cap : [wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix],
                 current_captions)
 
-            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=decoder_step-1)
+            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=decoder_step-1, value=0)
             current_caption_matrix = np.hstack(
                 [current_caption_matrix, np.zeros([len(current_caption_matrix), 1])]).astype(int)
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
@@ -360,9 +364,9 @@ def train():
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
 
-def test(model_path='models/model-50', video_feat_path=video_feat_path):
+def test(model_path='models/model-61', video_feat_path=video_feat_path):
 
-    train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.9)
+    train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.7)
     test_videos = test_data['video_path'].values
     test_captions = test_data['Description'].values
     ixtoword = pd.Series(np.load('./data/ixtoword.npy').tolist())
@@ -392,8 +396,10 @@ def test(model_path='models/model-50', video_feat_path=video_feat_path):
     saver.restore(sess, model_path)
 
     scorer = Meteor()
-    GTS = dict()
-    RES = dict()
+    scorer_bleu = Bleu(4)
+    GTS = defaultdict(list)
+    RES = defaultdict(list)
+    counter = 0
 
     for (video_feat_path, caption) in zip(test_videos_unique, test_captions_list):
         generated_sentence = gen_sentence(
@@ -401,12 +407,22 @@ def test(model_path='models/model-50', video_feat_path=video_feat_path):
         print video_feat_path, generated_sentence
         #print caption
 
-        GTS[video_feat_path] = caption
-        RES[video_feat_path] = [generated_sentence[:-2] + '.']
+        GTS[str(counter)] = [{'image_id':str(counter),'cap_id':i,'caption':s} for i, s in enumerate(caption)]
+        RES[str(counter)] = [{'image_id':str(counter),'caption':generated_sentence[:-2]+'.'}]
+
+        #GTS[video_feat_path] = caption
+        #RES[video_feat_path] = [generated_sentence[:-2] + '.']
+        counter += 1
         #ipdb.set_trace()
+
+    tokenizer = PTBTokenizer()
+    GTS = tokenizer.tokenize(GTS)
+    RES = tokenizer.tokenize(RES)
 
     score, scores = scorer.compute_score(GTS, RES)
     print "METEOR", score
+    score, scores = scorer_bleu.compute_score(GTS, RES)
+    print "BLEU", score
 
     #ipdb.set_trace()
 
@@ -421,7 +437,7 @@ def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixt
 
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-    #video_feat = sampling(video_feat, 0.2)
+    #video_feat = sampling(video_feat, 0.7)
 
     generated_word_index = sess.run(
         caption_tf, feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
@@ -445,4 +461,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    test()
+    #test(model_path='models/model-43')
+    train(prev_model_path=None)
