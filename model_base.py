@@ -77,7 +77,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Encoder"):
             _, state_encoder = tf.nn.dynamic_rnn(
                 cell=rnn.MultiRNNCell(
-                    [rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)] * 2,
+                    [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
                     state_is_tuple=True),
                 inputs=image_emb,
                 sequence_length=None,
@@ -87,7 +87,7 @@ class Video_Caption_Generator():
         # Phase 2 => only generate captions
         state_decoder = state_encoder
         decoder = rnn.MultiRNNCell(
-            [rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)] * 2,
+            [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
             state_is_tuple=True)
 
         with tf.variable_scope("Decoder"):
@@ -131,7 +131,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Encoder"):
             _, state_encoder = tf.nn.dynamic_rnn(
                 cell=rnn.MultiRNNCell(
-                    [rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)] * 2,
+                    [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
                     state_is_tuple=True),
                 inputs=image_emb,
                 sequence_length=None,
@@ -141,7 +141,7 @@ class Video_Caption_Generator():
         # Phase 2 => only generate captions
         state_decoder = state_encoder
         decoder = rnn.MultiRNNCell(
-            [rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)] * 2,
+            [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
             state_is_tuple=True)
 
         with tf.variable_scope("Decoder"):
