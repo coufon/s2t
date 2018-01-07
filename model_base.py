@@ -23,6 +23,7 @@ video_feat_path = './dataset/youtube_feats'
 model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
+dim_embed = 512
 dim_hidden= 1024
 encoder_step = 80
 decoder_step = 30
@@ -34,23 +35,24 @@ learning_rate = 0.0002
 
 
 class Video_Caption_Generator():
-    def __init__(self, dim_image, n_words, dim_hidden, batch_size,
+    def __init__(self, dim_image, n_words, dim_embed, dim_hidden, batch_size,
             encoder_max_sequence_length, decoder_max_sentence_length,
             bias_init_vector=None):
         self.dim_image = dim_image
         self.n_words = n_words
+        self.dim_embed = dim_embed
         self.dim_hidden = dim_hidden
         self.batch_size = batch_size
         self.encoder_max_sequence_length = encoder_max_sequence_length
         self.decoder_max_sentence_length = decoder_max_sentence_length
 
         #with tf.device("/cpu:0"):
-        self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
+        self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_embed], -0.1, 0.1), name='Wemb')
 
-        self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
-        self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
+        self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='encode_image_W')
+        self.encode_image_b = tf.Variable( tf.zeros([dim_embed]), name='encode_image_b')
 
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_embed, n_words], -0.1, 0.1), name='embed_word_W')
         if bias_init_vector is not None:
             self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
         else:
@@ -65,8 +67,8 @@ class Video_Caption_Generator():
         caption_mask = tf.placeholder(tf.float32, [self.batch_size, self.decoder_max_sentence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
-        image_emb = tf.reshape(image_emb, [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
+        image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
+        image_emb = tf.reshape(image_emb, [self.batch_size, self.encoder_max_sequence_length, self.dim_embed])
 
         probs = list()
         loss = 0.0
@@ -91,7 +93,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                    current_embed = tf.zeros([self.batch_size, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
@@ -119,9 +121,7 @@ class Video_Caption_Generator():
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
-        image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_hidden])
-
-        #padding = tf.zeros([1, self.dim_hidden])
+        image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_embed])
 
         generated_words = list()
         probs = list()
@@ -147,7 +147,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    current_embed = tf.zeros([1, self.dim_hidden])
+                    current_embed = tf.zeros([1, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
@@ -226,6 +226,7 @@ def train(prev_model_path=None):
     model = Video_Caption_Generator(
             dim_image=dim_image,
             n_words=len(wordtoix),
+            dim_embed=dim_embed,
             dim_hidden=dim_hidden,
             batch_size=batch_size,
             encoder_max_sequence_length=encoder_step,
@@ -324,6 +325,7 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
     model = Video_Caption_Generator(
             dim_image=dim_image,
             n_words=len(ixtoword),
+            dim_embed=dim_embed,
             dim_hidden=dim_hidden,
             batch_size=batch_size,
             encoder_max_sequence_length=encoder_step,
