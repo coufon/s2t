@@ -49,10 +49,15 @@ class Video_Caption_Generator():
         #with tf.device("/cpu:0"):
         self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_embed], -0.1, 0.1), name='Wemb')
 
-        self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='encode_image_W')
-        self.encode_image_b = tf.Variable( tf.zeros([dim_embed]), name='encode_image_b')
+        self.encoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_lstm_W')
+        self.encoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_lstm_b')
+        self.decoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='decoder_lstm_W')
+        self.decoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='decoder_lstm_b')
 
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_embed, n_words], -0.1, 0.1), name='embed_word_W')
+        self.encode_image_W = tf.Variable(tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='encode_image_W')
+        self.encode_image_b = tf.Variable(tf.zeros([dim_embed]), name='encode_image_b')
+
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
         if bias_init_vector is not None:
             self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
         else:
@@ -67,8 +72,14 @@ class Video_Caption_Generator():
         caption_mask = tf.placeholder(tf.float32, [self.batch_size, self.decoder_max_sentence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
-        image_emb = tf.reshape(image_emb, [self.batch_size, self.encoder_max_sequence_length, self.dim_embed])
+        image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b)
+        image_emb = tf.reshape(image_emb,
+            [self.batch_size, self.encoder_max_sequence_length, self.dim_embed])
+
+        image_emb_flat = tf.reshape(image_emb, [-1, self.dim_embed])
+        encoder_input = tf.nn.xw_plus_b(image_emb_flat, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.reshape(encoder_input,
+            [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
         probs = list()
         loss = 0.0
@@ -79,7 +90,7 @@ class Video_Caption_Generator():
                 cell=rnn.MultiRNNCell(
                     [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
                     state_is_tuple=True),
-                inputs=image_emb,
+                inputs=encoder_input,
                 sequence_length=None,
                 initial_state=None,
                 dtype=tf.float32)
@@ -97,8 +108,9 @@ class Video_Caption_Generator():
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
-
-                (output_decoder, state_decoder) = decoder(current_embed, state_decoder)
+                
+                decoder_input = tf.nn.xw_plus_b(current_embed, self.decoder_lstm_W, self.decoder_lstm_b)
+                (output_decoder, state_decoder) = decoder(decoder_input, state_decoder)
 
                 labels = tf.expand_dims(caption[:, i], 1)
                 indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
