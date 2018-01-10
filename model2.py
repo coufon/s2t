@@ -23,10 +23,11 @@ video_feat_path = './dataset/youtube_feats'
 model_path = './models/'
 ############## Train Parameters #################
 dim_image = 4096
+dim_embed = 512
 dim_hidden= 1024
 encoder_step = 80
 decoder_step = 30
-n_epochs = 1000
+n_epochs = 3000
 batch_size = 128
 chunk_len = 8
 learning_rate = 0.0002
@@ -34,30 +35,29 @@ learning_rate = 0.0002
 
 
 class Video_Caption_Generator():
-    def __init__(self, dim_image, n_words, dim_hidden, batch_size,
+    def __init__(self, dim_image, n_words, dim_embed, dim_hidden, batch_size,
             encoder_max_sequence_length, decoder_max_sentence_length,
             bias_init_vector=None):
         self.dim_image = dim_image
         self.n_words = n_words
+        self.dim_embed = dim_embed
         self.dim_hidden = dim_hidden
         self.batch_size = batch_size
         self.encoder_max_sequence_length = encoder_max_sequence_length
         self.decoder_max_sentence_length = decoder_max_sentence_length
 
         #with tf.device("/cpu:0"):
-        self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_hidden], -0.1, 0.1), name='Wemb')
+        self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_embed], -0.1, 0.1), name='Wemb')
 
-        #self.lstm1 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
-        #self.lstm2 = rnn.BasicLSTMCell(dim_hidden, state_is_tuple=True)
-
-        self.encoder_bottom = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
-        self.encoder_top = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
-        self.decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
+        self.encoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_lstm_W')
+        self.encoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_lstm_b')
+        #self.decoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='decoder_lstm_W')
+        #self.decoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='decoder_lstm_b')
 
         self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
         self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
 
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_embed, n_words], -0.1, 0.1), name='embed_word_W')
         if bias_init_vector is not None:
             self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
         else:
@@ -78,28 +78,24 @@ class Video_Caption_Generator():
         caption_mask = tf.placeholder(tf.float32, [self.batch_size, self.decoder_max_sentence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b) # (batch_size*n_lstm_steps, dim_hidden)
-        image_emb = tf.reshape(image_emb, [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
-
-        #state_encoder_bottom = self.encoder_bottom.zero_state(self.batch_size, dtype=tf.float32)
-        #state_encoder_top = self.encoder_top.zero_state(self.batch_size, dtype=tf.float32)
-        #state_decoder = self.decoder.zero_state(self.batch_size, dtype=tf.float32)
-        #padding = tf.zeros([self.batch_size, self.dim_hidden])
+        image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
+        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.reshape(encoder_input,
+            [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
         probs = list()
         loss = 0.0
 
 	    # Phase 1 => only read frames
-        #image_emb_seq = tf.unstack(image_emb, self.encoder_max_sequence_length, 1)
         with tf.variable_scope("Encoder_bottom"):
             outputs_bottom, _ = tf.nn.dynamic_rnn(
-                cell=self.encoder_bottom,
-                inputs=image_emb,
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
+                inputs=encoder_input,
                 dtype=tf.float32)
 
         with tf.variable_scope("Encoder_top"):
             outputs_top, state_encoder = tf.nn.dynamic_rnn(
-                cell=self.encoder_top,
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
                 inputs=tf.stack(
                     [outputs_bottom[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
                     axis=1),
@@ -107,6 +103,7 @@ class Video_Caption_Generator():
 
         # Phase 2 => only generate captions
         state_decoder = state_encoder
+        decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
 
         # Attention
         outputs_top_proj = [
@@ -133,7 +130,7 @@ class Video_Caption_Generator():
                         for weight, output_top in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
                 output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
 
-                (output_decoder, state_decoder) = self.decoder(
+                (output_decoder, state_decoder) = decoder(
                     #tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
                     tf.concat([current_embed, output_top_weighted_sum], 1), state_decoder)
 
@@ -158,9 +155,9 @@ class Video_Caption_Generator():
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
         image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
-        image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_hidden])
-
-        #padding = tf.zeros([1, self.dim_hidden])
+        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.reshape(encoder_input,
+            [1, self.encoder_max_sequence_length, self.dim_hidden])
 
         generated_words = list()
         probs = list()
@@ -169,13 +166,13 @@ class Video_Caption_Generator():
 	    # Phase 1 => only read frames
         with tf.variable_scope("Encoder_bottom"):
             outputs_bottom, _ = tf.nn.dynamic_rnn(
-                cell=self.encoder_bottom,
-                inputs=image_emb,
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
+                inputs=encoder_input,
                 dtype=tf.float32)
 
         with tf.variable_scope("Encoder_top"):
             outputs_top, state_encoder = tf.nn.dynamic_rnn(
-                cell=self.encoder_top,
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
                 inputs=tf.stack(
                     [outputs_bottom[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
                     axis=1),
@@ -183,6 +180,7 @@ class Video_Caption_Generator():
 
         # Phase 2 => only generate captions
         state_decoder = state_encoder
+        decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
 
         # Attention
         outputs_top_proj = [
@@ -210,7 +208,7 @@ class Video_Caption_Generator():
                         for weight, output_top in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
                 output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
 
-                (output_decoder, state_decoder) = self.decoder(
+                (output_decoder, state_decoder) = decoder(
                     #tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
                     tf.concat([current_embed, output_top_weighted_sum], 1), state_decoder)
 
@@ -306,8 +304,8 @@ def train(prev_model_path=None):
         np.random.shuffle(index)
         current_train_data = train_data.ix[index]
 
-        #current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc(np.random.choice(len(x))))
-        #current_train_data = current_train_data.reset_index(drop=True)
+        current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc[np.random.choice(len(x))])
+        current_train_data = current_train_data.reset_index(drop=True)
 
         for start,end in zip(
                 range(0, len(current_train_data), batch_size),
@@ -359,7 +357,7 @@ def train(prev_model_path=None):
                         })
 
             print loss_val
-        if np.mod(epoch, 1) == 0:
+        if np.mod(epoch+1, 100) == 0:
             print "Epoch ", epoch, " is done. Saving the model ..."
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
@@ -461,5 +459,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    test(model_path='models/model-113')
-    #train(prev_model_path=None)
+    #test(model_path='models/model-113')
+    train(prev_model_path=None)
