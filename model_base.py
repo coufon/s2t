@@ -27,7 +27,7 @@ dim_embed = 512
 dim_hidden= 1024
 encoder_step = 80
 decoder_step = 30
-n_epochs = 1000
+n_epochs = 3000
 batch_size = 128
 chunk_len = 8
 learning_rate = 0.0002
@@ -73,11 +73,7 @@ class Video_Caption_Generator():
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
         image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b)
-        image_emb = tf.reshape(image_emb,
-            [self.batch_size, self.encoder_max_sequence_length, self.dim_embed])
-
-        image_emb_flat = tf.reshape(image_emb, [-1, self.dim_embed])
-        encoder_input = tf.nn.xw_plus_b(image_emb_flat, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
         encoder_input = tf.reshape(encoder_input,
             [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
@@ -108,7 +104,7 @@ class Video_Caption_Generator():
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
-                
+
                 decoder_input = tf.nn.xw_plus_b(current_embed, self.decoder_lstm_W, self.decoder_lstm_b)
                 (output_decoder, state_decoder) = decoder(decoder_input, state_decoder)
 
@@ -132,8 +128,10 @@ class Video_Caption_Generator():
         video_mask = tf.placeholder(tf.float32, [1, self.encoder_max_sequence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
-        image_emb = tf.reshape(image_emb, [1, self.encoder_max_sequence_length, self.dim_embed])
+        image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b)
+        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.reshape(encoder_input,
+            [1, self.encoder_max_sequence_length, self.dim_hidden])
 
         generated_words = list()
         probs = list()
@@ -145,7 +143,7 @@ class Video_Caption_Generator():
                 cell=rnn.MultiRNNCell(
                     [rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)] * 2,
                     state_is_tuple=True),
-                inputs=image_emb,
+                inputs=encoder_input,
                 sequence_length=None,
                 initial_state=None,
                 dtype=tf.float32)
@@ -165,7 +163,8 @@ class Video_Caption_Generator():
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
                     current_embed = tf.expand_dims(current_embed, 0)
 
-                (output_decoder, state_decoder) = decoder(current_embed, state_decoder)
+                decoder_input = tf.nn.xw_plus_b(current_embed, self.decoder_lstm_W, self.decoder_lstm_b)
+                (output_decoder, state_decoder) = decoder(decoder_input, state_decoder)
 
                 logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
                 max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -260,8 +259,8 @@ def train(prev_model_path=None):
         np.random.shuffle(index)
         current_train_data = train_data.ix[index]
 
-        #current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc(np.random.choice(len(x))))
-        #current_train_data = current_train_data.reset_index(drop=True)
+        current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc[np.random.choice(len(x))])
+        current_train_data = current_train_data.reset_index(drop=True)
 
         for start,end in zip(
                 range(0, len(current_train_data), batch_size),
@@ -313,7 +312,7 @@ def train(prev_model_path=None):
                     })
 
             print loss_val
-        if np.mod(epoch, 1) == 0:
+        if np.mod(epoch+1, 100) == 0:
             print "Epoch ", epoch, " is done. Saving the model ..."
             saver.save(sess, os.path.join(model_path, 'model'), global_step=epoch)
 
@@ -416,5 +415,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    #test(model_path='models/model-43')
-    train(prev_model_path=None)
+    #test(model_path='models/model-599')
+    train(prev_model_path='models/model-599')

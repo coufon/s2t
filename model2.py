@@ -461,5 +461,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    #test(model_path='models/model-43')
-    train(prev_model_path=None)
+    test(model_path='models/model-113')
+    #train(prev_model_path=None)
