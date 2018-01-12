@@ -30,7 +30,7 @@ decoder_step = 30
 n_epochs = 3000
 batch_size = 128
 chunk_len = 8
-learning_rate = 0.0002
+learning_rate = 0.00001
 ##################################################
 
 
@@ -54,10 +54,10 @@ class Video_Caption_Generator():
         #self.decoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='decoder_lstm_W')
         #self.decoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='decoder_lstm_b')
 
-        self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_hidden], -0.1, 0.1), name='encode_image_W')
-        self.encode_image_b = tf.Variable( tf.zeros([dim_hidden]), name='encode_image_b')
+        self.encode_image_W = tf.Variable( tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='encode_image_W')
+        self.encode_image_b = tf.Variable( tf.zeros([dim_embed]), name='encode_image_b')
 
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_embed, n_words], -0.1, 0.1), name='embed_word_W')
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
         if bias_init_vector is not None:
             self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
         else:
@@ -78,7 +78,7 @@ class Video_Caption_Generator():
         caption_mask = tf.placeholder(tf.float32, [self.batch_size, self.decoder_max_sentence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b( video_flat, self.encode_image_W, self.encode_image_b)
+        image_emb = tf.nn.xw_plus_b(video_flat, self.encode_image_W, self.encode_image_b)
         encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
         encoder_input = tf.reshape(encoder_input,
             [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
@@ -113,7 +113,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    current_embed = tf.zeros([self.batch_size, self.dim_hidden])
+                    current_embed = tf.zeros([self.batch_size, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
@@ -190,7 +190,7 @@ class Video_Caption_Generator():
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    current_embed = tf.zeros([1, self.dim_hidden])
+                    current_embed = tf.zeros([1, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
                     current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
@@ -283,6 +283,7 @@ def train(prev_model_path=None):
     model = Video_Caption_Generator(
             dim_image=dim_image,
             n_words=len(wordtoix),
+            dim_embed=dim_embed,
             dim_hidden=dim_hidden,
             batch_size=batch_size,
             encoder_max_sequence_length=encoder_step,
@@ -304,7 +305,8 @@ def train(prev_model_path=None):
         np.random.shuffle(index)
         current_train_data = train_data.ix[index]
 
-        current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc[np.random.choice(len(x))])
+        current_train_data = train_data.groupby('video_path').apply(
+            lambda x: x.iloc[np.random.choice(len(x))])
         current_train_data = current_train_data.reset_index(drop=True)
 
         for start,end in zip(
@@ -381,6 +383,7 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
     model = Video_Caption_Generator(
             dim_image=dim_image,
             n_words=len(ixtoword),
+            dim_embed=dim_embed,
             dim_hidden=dim_hidden,
             batch_size=batch_size,
             encoder_max_sequence_length=encoder_step,
@@ -459,5 +462,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    #test(model_path='models/model-113')
-    train(prev_model_path=None)
+    test(model_path='models/model-2999')
+    #train(prev_model_path='models/model-299')
