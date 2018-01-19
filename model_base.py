@@ -259,7 +259,8 @@ def train(prev_model_path=None):
         np.random.shuffle(index)
         current_train_data = train_data.ix[index]
 
-        current_train_data = train_data.groupby('video_path').apply(lambda x: x.iloc[np.random.choice(len(x))])
+        current_train_data = train_data.groupby('video_path').apply(
+            lambda x: x.iloc[np.random.choice(len(x))])
         current_train_data = current_train_data.reset_index(drop=True)
 
         for start,end in zip(
@@ -415,5 +416,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    #test(model_path='models/model-599')
-    train(prev_model_path='models/model-599')
+    test(model_path='models/model-399')
+    #train(prev_model_path=None)
