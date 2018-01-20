@@ -111,7 +111,7 @@ class Video_Caption_Generator():
             [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
         # Embed obj features.
-        obj_feats_flat = tf.reshape(video, [-1, self.dim_obj_feats])
+        obj_feats_flat = tf.reshape(obj_feats, [-1, self.dim_obj_feats])
         obj_emb = tf.nn.xw_plus_b(obj_feats_flat, self.embed_obj_W, self.embed_obj_b)
         encoder_obj_input = tf.nn.xw_plus_b(obj_emb, self.encoder_obj_lstm_W, self.encoder_obj_lstm_b)
         encoder_obj_input = tf.reshape(encoder_obj_input,
@@ -386,7 +386,7 @@ def train(prev_model_path=None):
             current_feats = np.zeros((batch_size, encoder_step, dim_image))
             current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
             # Object features.
-            current_obj_feats = np.zeros((batch_size, n_obj_feats, dim_image))
+            current_obj_feats = np.zeros((batch_size, n_obj_feats, dim_obj_feats))
             current_obj_feats_vals = map(lambda vid: np.load(os.path.join(video_obj_feat_path, vid)), current_videos)
 
             current_video_masks = np.zeros((batch_size, encoder_step))
@@ -399,7 +399,7 @@ def train(prev_model_path=None):
                 current_video_masks[ind][:len(current_feats_vals[ind])] = 1
 
             for ind, feat in enumerate(current_obj_feats_vals):
-                if feat is not None:
+                if feat is not None and len(feat.shape) == 2:
                     n_obj = min(n_obj_feats, feat.shape[0])
                     current_obj_feats[ind][:n_obj] = feat[:n_obj]
 
@@ -555,5 +555,5 @@ def sampling(video_feat, sampling_rate):
 
 
 if __name__=="__main__":
-    test(model_path='models/model-2999')
-    #train(prev_model_path='models/model-299')
+    #test(model_path='models/model-2999')
+    train(prev_model_path='models/model-499')
