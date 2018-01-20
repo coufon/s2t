@@ -96,27 +96,31 @@ class Video_Caption_Generator():
         self.obj_embed_att_ba = tf.Variable( tf.zeros([dim_hidden]), name='obj_embed_att_ba')
 
 
-    def build_model(self):
-        video = tf.placeholder(tf.float32, [self.batch_size, self.encoder_max_sequence_length, self.dim_image])
-        video_mask = tf.placeholder(tf.float32, [self.batch_size, self.encoder_max_sequence_length])
-        obj_feats = tf.placeholder(tf.float32, [self.batch_size, self.n_obj_feats, self.dim_obj_feats])
+    def build_model(self, is_test=False):
+        batch_size = 1 if is_test else self.batch_size
 
-        caption = tf.placeholder(tf.int32, [self.batch_size, self.decoder_max_sentence_length])
-        caption_mask = tf.placeholder(tf.float32, [self.batch_size, self.decoder_max_sentence_length])
+        video = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length, self.dim_image])
+        video_mask = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length])
+        obj_feats = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats, self.dim_obj_feats])
+
+        caption = tf.placeholder(tf.int32, [batch_size, self.decoder_max_sentence_length])
+        caption_mask = tf.placeholder(tf.float32, [batch_size, self.decoder_max_sentence_length])
 
         video_flat = tf.reshape(video, [-1, self.dim_image])
         image_emb = tf.nn.xw_plus_b(video_flat, self.embed_image_W, self.embed_image_b)
         encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
         encoder_input = tf.reshape(encoder_input,
-            [self.batch_size, self.encoder_max_sequence_length, self.dim_hidden])
+            [batch_size, self.encoder_max_sequence_length, self.dim_hidden])
 
         # Embed obj features.
         obj_feats_flat = tf.reshape(obj_feats, [-1, self.dim_obj_feats])
         obj_emb = tf.nn.xw_plus_b(obj_feats_flat, self.embed_obj_W, self.embed_obj_b)
         encoder_obj_input = tf.nn.xw_plus_b(obj_emb, self.encoder_obj_lstm_W, self.encoder_obj_lstm_b)
         encoder_obj_input = tf.reshape(encoder_obj_input,
-            [self.batch_size, self.n_obj_feats, self.dim_hidden])        
+            [batch_size, self.n_obj_feats, self.dim_hidden])        
 
+        if is_test:
+            generated_words = list()
         probs = list()
         loss = 0.0
 
@@ -160,10 +164,14 @@ class Video_Caption_Generator():
         with tf.variable_scope("Decoder"):
             for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    current_embed = tf.zeros([self.batch_size, self.dim_embed])
+                    current_embed = tf.zeros([batch_size, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
-                    current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
+                    if is_test:
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
+                        current_embed = tf.expand_dims(current_embed, 0)
+                    else:
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
                 # Attention of image features.
                 state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
@@ -195,94 +203,25 @@ class Video_Caption_Generator():
                     self.embed_decoder_W, self.embed_decoder_b)
 
                 (output_decoder, state_decoder) = decoder(decoder_input, state_decoder)
-
-                labels = tf.expand_dims(caption[:, i], 1)
-                indices = tf.expand_dims(tf.range(0, self.batch_size, 1), 1)
-                concated = tf.concat([indices, labels], 1)
-                onehot_labels = tf.sparse_to_dense(concated, tf.stack([self.batch_size, self.n_words]), 1.0, 0.0)
                 logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
-                cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
-                cross_entropy = cross_entropy * caption_mask[:, i]
                 probs.append(logit_words)
-                current_loss = tf.reduce_sum(cross_entropy)
-                loss += current_loss
 
-        loss = loss / tf.reduce_sum(caption_mask)
-        return loss, video, video_mask, obj_feats, caption, caption_mask, probs
-
-
-    def build_generator(self):
-        video = tf.placeholder(tf.float32, [1, self.encoder_max_sequence_length, self.dim_image])
-        video_mask = tf.placeholder(tf.float32, [1, self.encoder_max_sequence_length])
-
-        video_flat = tf.reshape(video, [-1, self.dim_image])
-        image_emb = tf.nn.xw_plus_b( video_flat, self.embed_image_W, self.embed_image_b)
-        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
-        encoder_input = tf.reshape(encoder_input,
-            [1, self.encoder_max_sequence_length, self.dim_hidden])
-
-        generated_words = list()
-        probs = list()
-        embeds = list()
-
-	    # Phase 1 => only read frames
-        with tf.variable_scope("Encoder_bottom"):
-            outputs_bottom, _ = tf.nn.dynamic_rnn(
-                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
-                inputs=encoder_input,
-                dtype=tf.float32)
-
-        with tf.variable_scope("Encoder_top"):
-            outputs_top, state_encoder = tf.nn.dynamic_rnn(
-                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
-                inputs=tf.stack(
-                    [outputs_bottom[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
-                    axis=1),
-                dtype=tf.float32)
-
-        # Phase 2 => only generate captions
-        state_decoder = state_encoder
-        decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
-
-        # Attention
-        outputs_top_proj = [
-            tf.nn.xw_plus_b(outputs_top[:, i, :], self.embed_att_Wa, self.embed_att_ba) \
-                for i in range(outputs_top.shape[1])]
-
-        weights_list = []
-        with tf.variable_scope("Decoder"):
-            for i in range(self.decoder_max_sentence_length):
-                if i == 0:
-                    current_embed = tf.zeros([1, self.dim_embed])
+                if is_test:
+                    max_prob_index = tf.argmax(logit_words, 1)[0]
+                    generated_words.append(max_prob_index)
                 else:
-                    tf.get_variable_scope().reuse_variables()
-                    current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
-                    current_embed = tf.expand_dims(current_embed, 0)
+                    labels = tf.expand_dims(caption[:, i], 1)
+                    indices = tf.expand_dims(tf.range(0, batch_size, 1), 1)
+                    concated = tf.concat([indices, labels], 1)
+                    onehot_labels = tf.sparse_to_dense(concated, tf.stack([batch_size, self.n_words]), 1.0, 0.0)
+                    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logits=logit_words, labels=onehot_labels)
+                    cross_entropy = cross_entropy * caption_mask[:, i]
+                    current_loss = tf.reduce_sum(cross_entropy)
+                    loss += current_loss
 
-                # Attention.
-                state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
-                e_list = tf.stack([
-                    tf.matmul(tf.tanh(tf.add(output_top_proj, state_proj)), self.embed_att_w) \
-                        for output_top_proj in outputs_top_proj], axis=0)
-                weights = tf.nn.softmax(e_list, dim=0)
-                weights_list.append(weights)
-
-                output_top_weighted = [
-                    tf.multiply(output_top, tf.tile(weight, [1, dim_hidden])) \
-                        for weight, output_top in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
-                output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
-
-                (output_decoder, state_decoder) = decoder(
-                    #tf.concat([current_embed, outputs_top[:, -1, :]], 1), state_decoder)
-                    tf.concat([current_embed, output_top_weighted_sum], 1), state_decoder)
-
-                logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
-                max_prob_index = tf.argmax(logit_words, 1)[0]
-                generated_words.append(max_prob_index)
-                probs.append(logit_words)
-                embeds.append(current_embed)
-
-        return video, video_mask, generated_words, probs, embeds, weights_list
+        if not is_test:
+            loss = loss / tf.reduce_sum(caption_mask)
+        return loss, video, video_mask, obj_feats, caption, caption_mask, probs
 
 
 def get_video_data(video_data_path, video_feat_path, train_ratio=0.7):
@@ -442,7 +381,6 @@ def train(prev_model_path=None):
 
 
 def test(model_path='models/model-61', video_feat_path=video_feat_path):
-
     train_data, test_data = get_video_data(video_data_path, video_feat_path, train_ratio=0.7)
     test_videos = test_data['video_path'].values
     test_captions = test_data['Description'].values
@@ -467,7 +405,7 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
             decoder_max_sentence_length=decoder_step,
             bias_init_vector=None)
 
-    video_tf, video_mask_tf, caption_tf, probs_tf, last_embed_tf, weights_tf = model.build_generator()
+    tf_loss, tf_video, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs = model.build_model(is_test=True)
     sess = tf.InteractiveSession()
 
     saver = tf.train.Saver()
@@ -479,32 +417,31 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
     RES = defaultdict(list)
     counter = 0
 
-    for (video_feat_path, caption) in zip(test_videos_unique, test_captions_list):
-        generated_sentence, weights = gen_sentence(
-            sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixtoword, weights_tf, 1)
+    for (vid, caption) in zip(test_videos_unique, test_captions_list):
+        generated_sentence = gen_sentence(
+            sess, tf_video, tf_video_mask, tf_obj_feats, tf_caption, vid, ixtoword, 1)
         #generated_sentence_test, weights = gen_sentence(
-        #    sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixtoword, weights_tf, 0.3)
+        #    sess, video_tf, video_mask_tf, caption_tf, vid, ixtoword, weights_tf, 0.3)
 
-        print video_feat_path
-        print generated_sentence
+        print vid, generated_sentence
         #print generated_sentence_test
-        print caption
+        #print caption
 
         GTS[str(counter)] = [{'image_id':str(counter),'cap_id':i,'caption':s} for i, s in enumerate(caption)]
         RES[str(counter)] = [{'image_id':str(counter),'caption':generated_sentence[:-2]+'.'}]
 
-        #GTS[video_feat_path] = caption
-        #RES[video_feat_path] = [generated_sentence[:-2] + '.']
+        #GTS[vid] = caption
+        #RES[vid] = [generated_sentence[:-2] + '.']
         counter += 1
         
-        words = generated_sentence.split(' ')
-        fig = plt.figure()
-        for i in range(len(words)):
-            w = weights[i]
-            ax = fig.add_subplot(len(words), 1, i+1)
-            ax.set_title(words[i])
-            ax.plot(range(len(w)), [ww[0] for ww in w], 'b')
-        plt.show()
+        #words = generated_sentence.split(' ')
+        #fig = plt.figure()
+        #for i in range(len(words)):
+        #    w = weights[i]
+        #    ax = fig.add_subplot(len(words), 1, i+1)
+        #    ax.set_title(words[i])
+        #    ax.plot(range(len(w)), [ww[0] for ww in w], 'b')
+        #plt.show()
 
         ipdb.set_trace()
 
@@ -520,21 +457,29 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
     #ipdb.set_trace()
 
 
-def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixtoword,
-        weights_tf, sampling_rate):
+def gen_sentence(sess, video_tf, video_mask_tf, obj_feats_tf, caption_tf, vid, ixtoword, sampling_rate):
     video_feat = np.zeros((1, encoder_step, dim_image))
     video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
 
-    feat = np.load(video_feat_path)[None, ...]
+    feat = np.load(os.path.join(video_feat_path, vid))[None, ...]
     video_feat[0, :feat.shape[1], :] = feat
     video_mask[:feat.shape[1], :] = 1
+
+    current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
+    # Object features.
+    obj_feats = np.load(os.path.join(video_obj_feat_path, vid))[None, ...]
 
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
     video_feat = sampling(video_feat, sampling_rate)
 
-    generated_word_index, weights = sess.run(
-        [caption_tf, weights_tf], feed_dict={video_tf:video_feat, video_mask_tf:video_mask})
+    generated_word_index = sess.run(
+        caption_tf,
+        feed_dict={
+            video_tf: video_feat,
+            video_mask_tf:video_mask,
+            obj_feats_tf: obj_feats,
+        })
     #probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
     #embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
     generated_words = ixtoword[generated_word_index]
@@ -543,7 +488,7 @@ def gen_sentence(sess, video_tf, video_mask_tf, caption_tf, video_feat_path, ixt
     generated_words = generated_words[:punctuation]
 
     generated_sentence = ' '.join(generated_words)
-    return generated_sentence, weights
+    return generated_sentence
 
 
 def sampling(video_feat, sampling_rate):
