@@ -20,7 +20,7 @@ from pycocoevalcap.meteor.meteor import Meteor
 video_path = './dataset/youtube_videos'
 video_data_path='./data/video_corpus.csv'
 video_feat_path = './dataset/youtube_feats'
-video_obj_feat_path = './dataset/youtube_feats_resnet'
+video_obj_feat_path = './dataset/youtube_obj_feats'
 
 model_path = './models/'
 ############## Train Parameters #################
@@ -28,9 +28,9 @@ dim_image = 4096
 dim_embed = 512
 dim_hidden= 1024
 dim_obj_feats = 2048
-n_obj_feats = 32 # max
-encoder_step = n_obj_feats
-decoder_step = n_obj_feats
+n_obj_feats = 8
+encoder_step = 80
+decoder_step = 30
 n_epochs = 3000
 batch_size = 128
 chunk_len = 8
@@ -56,16 +56,16 @@ class Video_Caption_Generator():
         self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_embed], -0.1, 0.1), name='Wemb')
 
         # Image encoder LSTM input.
-        #self.encoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_lstm_W')
-        #self.encoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_lstm_b')
+        self.encoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_lstm_W')
+        self.encoder_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_lstm_b')
 
         # Obj feature encoder LSTM input.
-        #self.encoder_obj_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_obj_lstm_W')
-        #self.encoder_obj_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_obj_lstm_b')
+        self.encoder_obj_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_obj_lstm_W')
+        self.encoder_obj_lstm_b = tf.Variable(tf.zeros([dim_hidden]), name='encoder_obj_lstm_b')
 
         # Embed image feature.
-        #self.embed_image_W = tf.Variable(tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='embed_image_W')
-        #self.embed_image_b = tf.Variable(tf.zeros([dim_embed]), name='embed_image_b')
+        self.embed_image_W = tf.Variable(tf.random_uniform([dim_image, dim_embed], -0.1, 0.1), name='embed_image_W')
+        self.embed_image_b = tf.Variable(tf.zeros([dim_embed]), name='embed_image_b')
 
         # Embed obj features.
         self.embed_obj_W = tf.Variable(tf.random_uniform([dim_obj_feats, dim_embed], -0.1, 0.1), name='embed_obj_W')
@@ -73,8 +73,8 @@ class Video_Caption_Generator():
 
         # Embed decoder inputs.
         # TODO(fangzhou): it maybe unnecessary.
-        #self.embed_decoder_W = tf.Variable(tf.random_uniform([dim_embed+dim_hidden*2, dim_embed], -0.1, 0.1), name='embed_decoder_W')
-        #self.embed_decoder_b = tf.Variable(tf.zeros([dim_embed]), name='embed_decoder_b')    
+        self.embed_decoder_W = tf.Variable(tf.random_uniform([dim_embed+dim_hidden*2, dim_embed], -0.1, 0.1), name='embed_decoder_W')
+        self.embed_decoder_b = tf.Variable(tf.zeros([dim_embed]), name='embed_decoder_b')    
 
         # Embed words.
         self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
@@ -84,96 +84,125 @@ class Video_Caption_Generator():
             self.embed_word_b = tf.Variable(tf.zeros([n_words]), name='embed_word_b')
 
         # Attention of image features.
-        #self.embed_att_w = tf.Variable(tf.random_uniform([dim_hidden, 1], -0.1, 0.1), name='embed_att_w')
-        #self.embed_att_Wa = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden], -0.1, 0.1), name='embed_att_Wa')
-        #self.embed_att_Ua = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden],-0.1, 0.1), name='embed_att_Ua')
-        #self.embed_att_ba = tf.Variable( tf.zeros([dim_hidden]), name='embed_att_ba')       
+        self.embed_att_w = tf.Variable(tf.random_uniform([dim_hidden, 1], -0.1, 0.1), name='embed_att_w')
+        self.embed_att_Wa = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden], -0.1, 0.1), name='embed_att_Wa')
+        self.embed_att_Ua = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden],-0.1, 0.1), name='embed_att_Ua')
+        self.embed_att_ba = tf.Variable( tf.zeros([dim_hidden]), name='embed_att_ba')       
 
         # Attention of object features.
-        self.obj_embed_att_w = tf.Variable(tf.random_uniform([dim_embed, 1], -0.1, 0.1), name='obj_embed_att_w')
-        self.obj_embed_att_Wa = tf.Variable(tf.random_uniform([dim_embed, dim_embed], -0.1, 0.1), name='obj_embed_att_Wa')
-        self.obj_embed_att_Ua = tf.Variable(tf.random_uniform([dim_hidden, dim_embed],-0.1, 0.1), name='obj_embed_att_Ua')
-        self.obj_embed_att_ba = tf.Variable( tf.zeros([dim_embed]), name='obj_embed_att_ba')
+        self.obj_embed_att_w = tf.Variable(tf.random_uniform([dim_hidden, 1], -0.1, 0.1), name='obj_embed_att_w')
+        self.obj_embed_att_Wa = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden], -0.1, 0.1), name='obj_embed_att_Wa')
+        self.obj_embed_att_Ua = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden],-0.1, 0.1), name='obj_embed_att_Ua')
+        self.obj_embed_att_ba = tf.Variable( tf.zeros([dim_hidden]), name='obj_embed_att_ba')
 
 
     def build_model(self, is_test=False):
-        # Average of all obj features.
-        def length(sequence):
-            used = tf.sign(tf.reduce_max(tf.abs(sequence), 2))
-            return tf.cast(tf.reduce_sum(used, 1), tf.int32) 
- 
         batch_size = 1 if is_test else self.batch_size
 
-        #video = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length, self.dim_image])
-        video_mask = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats])
+        video = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length, self.dim_image])
+        video_mask = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length])
         obj_feats = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats, self.dim_obj_feats])
 
         caption = tf.placeholder(tf.int32, [batch_size, self.decoder_max_sentence_length])
         caption_mask = tf.placeholder(tf.float32, [batch_size, self.decoder_max_sentence_length])
 
-        # Build model.
+        video_flat = tf.reshape(video, [-1, self.dim_image])
+        image_emb = tf.nn.xw_plus_b(video_flat, self.embed_image_W, self.embed_image_b)
+        encoder_input = tf.nn.xw_plus_b(image_emb, self.encoder_lstm_W, self.encoder_lstm_b)
+        encoder_input = tf.reshape(encoder_input,
+            [batch_size, self.encoder_max_sequence_length, self.dim_hidden])
+
+        # Embed obj features.
+        obj_feats_flat = tf.reshape(obj_feats, [-1, self.dim_obj_feats])
+        obj_emb = tf.nn.xw_plus_b(obj_feats_flat, self.embed_obj_W, self.embed_obj_b)
+        encoder_obj_input = tf.nn.xw_plus_b(obj_emb, self.encoder_obj_lstm_W, self.encoder_obj_lstm_b)
+        encoder_obj_input = tf.reshape(encoder_obj_input,
+            [batch_size, self.n_obj_feats, self.dim_hidden])        
+
         if is_test:
             generated_words = list()
         probs = list()
         loss = 0.0
 
-        # Input feature of attention LSTM.
-        # Embed obj features.
-        obj_feats_flat = tf.reshape(obj_feats, [-1, self.dim_obj_feats])
-        obj_embs = tf.nn.xw_plus_b(obj_feats_flat, self.embed_obj_W, self.embed_obj_b)
-        obj_embs = tf.reshape(obj_embs, [batch_size, self.n_obj_feats, self.dim_embed])
+	    # Phase 1 => only read frames.
+        with tf.variable_scope("Encoder_bottom"):
+            outputs_bottom, _ = tf.nn.dynamic_rnn(
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
+                inputs=encoder_input,
+                dtype=tf.float32)
 
-        # Average features.
-        avg_obj_feats = tf.reduce_sum(obj_embs, 1)/tf.reshape(
-            tf.cast(length(obj_embs), tf.float32), (-1, 1))
+        with tf.variable_scope("Encoder_top"):
+            outputs_top, state_encoder = tf.nn.dynamic_rnn(
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
+                inputs=tf.stack(
+                    [outputs_bottom[:, i, :] for i in range(chunk_len-1, self.encoder_max_sequence_length, chunk_len)],
+                    axis=1),
+                dtype=tf.float32)
 
-        # Projected features for attention.
-        obj_emb_projs = [
-            tf.nn.xw_plus_b(obj_embs[:, i, :], self.obj_embed_att_Wa, self.obj_embed_att_ba) \
-                for i in range(obj_embs.shape[1])]
+        # Output to attention
+        outputs_top_proj = [
+            tf.nn.xw_plus_b(outputs_top[:, i, :], self.embed_att_Wa, self.embed_att_ba) \
+                for i in range(outputs_top.shape[1])]
 
-        # LSTMs.
-        att_lstm = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
+        # Phase 1.1 => read object features.
+        with tf.variable_scope("Encoder_obj"):
+            outputs_obj, state_encoder_obj = tf.nn.dynamic_rnn(
+                cell=rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True),
+                inputs=encoder_obj_input,
+                dtype=tf.float32)
+        
+        # Output to attention
+        outputs_obj_proj = [
+            tf.nn.xw_plus_b(outputs_obj[:, i, :], self.obj_embed_att_Wa, self.obj_embed_att_ba) \
+                for i in range(outputs_obj.shape[1])]     
+
+        # Phase 2 => only generate captions.
+        # TODO(fangzhou): how to add object feature encoder state into decoder state.
+        state_decoder = state_encoder
         decoder = rnn.BasicLSTMCell(num_units=dim_hidden, state_is_tuple=True)
-        state_att_lstm = att_lstm.zero_state(self.batch_size, dtype=tf.float32)
-        state_decoder = decoder.zero_state(self.batch_size, dtype=tf.float32)
-        output_decoder = state_decoder.h
 
-        for i in range(self.encoder_max_sequence_length):
-            with tf.variable_scope("Decoder"):
-                # Input Att LSTM: Previously word.
+        with tf.variable_scope("Decoder"):
+            for i in range(self.decoder_max_sentence_length):
                 if i == 0:
-                    prev_word_embed = tf.zeros([batch_size, self.dim_embed])
+                    current_embed = tf.zeros([batch_size, self.dim_embed])
                 else:
                     tf.get_variable_scope().reuse_variables()
                     if is_test:
-                        prev_word_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
-                        prev_word_embed = tf.expand_dims(prev_word_embed, 0)
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
+                        current_embed = tf.expand_dims(current_embed, 0)
                     else:
-                        prev_word_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
+                        current_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
-            with tf.variable_scope("Attention"):
-                # Attention LSTM.
-                (output_att_lstm, state_att_lstm) = att_lstm(
-                    tf.concat([output_decoder, avg_obj_feats, prev_word_embed], 1), state_att_lstm)
-
-                # Attention.
-                state_proj = tf.matmul(output_att_lstm, self.obj_embed_att_Ua)
+                # Attention of image features.
+                state_proj = tf.matmul(state_decoder.c, self.embed_att_Ua)
                 e_list = tf.stack([
-                    tf.matmul(tf.tanh(tf.add(obj_emb_proj, state_proj)), self.obj_embed_att_w) \
-                        for obj_emb_proj in obj_emb_projs], axis=0)
+                    tf.matmul(tf.tanh(tf.add(output_proj, state_proj)), self.embed_att_w) \
+                        for output_proj in outputs_top_proj], axis=0)
                 weights = tf.nn.softmax(e_list, dim=0)
 
-                emb_weighted = [
-                    tf.multiply(emb, tf.tile(weight, [1, dim_embed])) \
-                        for weight, emb in zip(tf.unstack(weights, axis=0), tf.unstack(obj_embs, axis=1))]
-                emb_weighted_sum = tf.reduce_sum(emb_weighted, 0)
+                output_top_weighted = [
+                    tf.multiply(output_proj, tf.tile(weight, [1, dim_hidden])) \
+                        for weight, output_proj in zip(tf.unstack(weights, axis=0), outputs_top_proj)]
+                output_top_weighted_sum = tf.reduce_sum(output_top_weighted, 0)
 
-            with tf.variable_scope("Decoder"):
-                # Word decoder LSTM.
-                (output_decoder, state_decoder) = decoder(
-                    tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder)
+                # Attention of object features.
+                obj_state_proj = tf.matmul(state_decoder.c, self.obj_embed_att_Ua)
+                obj_e_list = tf.stack([
+                    tf.matmul(tf.tanh(tf.add(output_proj, obj_state_proj)), self.obj_embed_att_w) \
+                        for output_proj in outputs_obj_proj], axis=0)
+                obj_weights = tf.nn.softmax(obj_e_list, dim=0)
 
+                output_obj_weighted = [
+                    tf.multiply(output_obj, tf.tile(weight, [1, dim_hidden])) \
+                        for weight, output_obj in zip(tf.unstack(obj_weights, axis=0), outputs_obj_proj)]
+                output_obj_weighted_sum = tf.reduce_sum(output_obj_weighted, 0)
+
+                # One time step of word decoder.
+                decoder_input = tf.nn.xw_plus_b(
+                    tf.concat([current_embed, output_top_weighted_sum, output_obj_weighted_sum], 1),
+                    self.embed_decoder_W, self.embed_decoder_b)
+
+                (output_decoder, state_decoder) = decoder(decoder_input, state_decoder)
                 logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
                 probs.append(logit_words)
 
@@ -192,7 +221,7 @@ class Video_Caption_Generator():
 
         if not is_test:
             loss = loss / tf.reduce_sum(caption_mask)
-        return loss, video_mask, obj_feats, caption, caption_mask, probs
+        return loss, video, video_mask, obj_feats, caption, caption_mask, probs
 
 
 def get_video_data(video_data_path, video_feat_path, train_ratio=0.7):
@@ -267,7 +296,7 @@ def train(prev_model_path=None):
             decoder_max_sentence_length=decoder_step,
             bias_init_vector=bias_init_vector)
 
-    tf_loss, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs = model.build_model()
+    tf_loss, tf_video, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs = model.build_model()
     sess = tf.InteractiveSession()
 
     saver = tf.train.Saver(max_to_keep=5)
@@ -293,26 +322,25 @@ def train(prev_model_path=None):
             current_batch = current_train_data[start:end]
             current_videos = current_batch['video_path'].values
             # Frame feature.
-            #current_feats = np.zeros((batch_size, encoder_step, dim_image))
-            #current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
+            current_feats = np.zeros((batch_size, encoder_step, dim_image))
+            current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
             # Object features.
             current_obj_feats = np.zeros((batch_size, n_obj_feats, dim_obj_feats))
             current_obj_feats_vals = map(lambda vid: np.load(os.path.join(video_obj_feat_path, vid)), current_videos)
 
-            current_video_masks = np.zeros((batch_size, n_obj_feats))
+            current_video_masks = np.zeros((batch_size, encoder_step))
 
-            #for ind, feat in enumerate(current_feats_vals):
+            for ind, feat in enumerate(current_feats_vals):
                 #interval_frame = max(feat.shape[0]/n_frame_step, 1)
                 #current_feats[ind][:len(current_feats_vals[ind])] = feat[
                 #    range(0, min(n_frame_step*interval_frame, max(feat.shape[0]), interval_frame), :]
-            #    current_feats[ind][:len(current_feats_vals[ind])] = feat
-            #    current_video_masks[ind][:len(current_feats_vals[ind])] = 1
+                current_feats[ind][:len(current_feats_vals[ind])] = feat
+                current_video_masks[ind][:len(current_feats_vals[ind])] = 1
 
             for ind, feat in enumerate(current_obj_feats_vals):
                 if feat is not None and len(feat.shape) == 2:
                     n_obj = min(n_obj_feats, feat.shape[0])
                     current_obj_feats[ind][:n_obj] = feat[:n_obj]
-                    current_video_masks[ind][:n_obj] = 1
 
             current_captions = current_batch['Description'].values
             for idx, cc in enumerate( current_captions ):
@@ -339,7 +367,7 @@ def train(prev_model_path=None):
             _, loss_val = sess.run(
                     [train_op, tf_loss],
                     feed_dict={
-                        #tf_video: current_feats,
+                        tf_video: current_feats,
                         tf_video_mask : current_video_masks,
                         tf_obj_feats: current_obj_feats,
                         tf_caption: current_caption_matrix,
@@ -473,4 +501,4 @@ def sampling(video_feat, sampling_rate):
 
 if __name__=="__main__":
     #test(model_path='models/model-2999')
-    train(prev_model_path=None)
+    train(prev_model_path='models/model-499')
