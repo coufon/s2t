@@ -5,9 +5,6 @@ import numpy as np
 import os
 import ipdb
 from collections import defaultdict
-import matplotlib.pyplot as plt
-
-import cv2
 
 from tensorflow.contrib import rnn
 from keras.preprocessing import sequence
@@ -34,7 +31,7 @@ decoder_step = n_obj_feats
 n_epochs = 3000
 batch_size = 128
 chunk_len = 8
-learning_rate = 0.00001
+learning_rate = 0.00005
 ##################################################
 
 
@@ -112,8 +109,7 @@ class Video_Caption_Generator():
         caption_mask = tf.placeholder(tf.float32, [batch_size, self.decoder_max_sentence_length])
 
         # Build model.
-        if is_test:
-            generated_words = list()
+        generated_words = list()
         probs = list()
         loss = 0.0
 
@@ -192,7 +188,7 @@ class Video_Caption_Generator():
 
         if not is_test:
             loss = loss / tf.reduce_sum(caption_mask)
-        return loss, video_mask, obj_feats, caption, caption_mask, probs
+        return loss, video_mask, obj_feats, caption, caption_mask, probs, generated_words
 
 
 def get_video_data(video_data_path, video_feat_path, train_ratio=0.7):
@@ -200,7 +196,7 @@ def get_video_data(video_data_path, video_feat_path, train_ratio=0.7):
     video_data = video_data[video_data['Language'] == 'English']
     video_data['video_path'] = video_data.apply(lambda row: row['VideoID']+'_'+str(row['Start'])+'_'+str(row['End'])+'.avi.npy', axis=1)
     #video_data['video_path'] = video_data['video_path'].map(lambda x: os.path.join(video_feat_path, x))
-    video_data = video_data[video_data['video_path'].map(lambda x: os.path.exists(os.path.join(video_feat_path, x)))]
+    #video_data = video_data[video_data['video_path'].map(lambda x: os.path.exists(os.path.join(video_feat_path, x)))]
     video_data = video_data[video_data['video_path'].map(lambda x: os.path.exists(os.path.join(video_obj_feat_path, x)))]
     video_data = video_data[video_data['Description'].map(lambda x: isinstance(x, str))]
 
@@ -267,7 +263,7 @@ def train(prev_model_path=None):
             decoder_max_sentence_length=decoder_step,
             bias_init_vector=bias_init_vector)
 
-    tf_loss, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs = model.build_model()
+    tf_loss, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs, _ = model.build_model()
     sess = tf.InteractiveSession()
 
     saver = tf.train.Saver(max_to_keep=5)
@@ -372,12 +368,14 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
             n_words=len(ixtoword),
             dim_embed=dim_embed,
             dim_hidden=dim_hidden,
-            batch_size=batch_size,
+            batch_size=1,
+            dim_obj_feats = dim_obj_feats,
+            n_obj_feats = n_obj_feats,
             encoder_max_sequence_length=encoder_step,
             decoder_max_sentence_length=decoder_step,
             bias_init_vector=None)
 
-    tf_loss, tf_video, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs = model.build_model(is_test=True)
+    tf_loss, tf_video_mask, tf_obj_feats, tf_caption, tf_caption_mask, tf_probs, tf_generated_words = model.build_model(is_test=True)
     sess = tf.InteractiveSession()
 
     saver = tf.train.Saver()
@@ -391,7 +389,7 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
 
     for (vid, caption) in zip(test_videos_unique, test_captions_list):
         generated_sentence = gen_sentence(
-            sess, tf_video, tf_video_mask, tf_obj_feats, tf_caption, vid, ixtoword, 1)
+            sess, tf_video_mask, tf_obj_feats, tf_generated_words, vid, ixtoword)
         #generated_sentence_test, weights = gen_sentence(
         #    sess, video_tf, video_mask_tf, caption_tf, vid, ixtoword, weights_tf, 0.3)
 
@@ -415,7 +413,7 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
         #    ax.plot(range(len(w)), [ww[0] for ww in w], 'b')
         #plt.show()
 
-        ipdb.set_trace()
+        #ipdb.set_trace()
 
     tokenizer = PTBTokenizer()
     GTS = tokenizer.tokenize(GTS)
@@ -429,28 +427,34 @@ def test(model_path='models/model-61', video_feat_path=video_feat_path):
     #ipdb.set_trace()
 
 
-def gen_sentence(sess, video_tf, video_mask_tf, obj_feats_tf, caption_tf, vid, ixtoword, sampling_rate):
-    video_feat = np.zeros((1, encoder_step, dim_image))
-    video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
+def gen_sentence(sess, tf_video_mask, tf_obj_feats, tf_generated_words, vid, ixtoword):
+    #video_feat = np.zeros((1, encoder_step, dim_image))
+    #video_mask = np.zeros((video_feat.shape[0], video_feat.shape[1]))
 
-    feat = np.load(os.path.join(video_feat_path, vid))[None, ...]
-    video_feat[0, :feat.shape[1], :] = feat
-    video_mask[:feat.shape[1], :] = 1
+    #feat = np.load(os.path.join(video_feat_path, vid))[None, ...]
+    #video_feat[0, :feat.shape[1], :] = feat
+    #video_mask[:feat.shape[1], :] = 1
 
-    current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
+    #current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
     # Object features.
-    obj_feats = np.load(os.path.join(video_obj_feat_path, vid))[None, ...]
+    obj_feats = np.zeros((1, n_obj_feats, dim_obj_feats))
+    feat = np.load(os.path.join(video_obj_feat_path, vid))
+    n_obj = min(n_obj_feats, feat.shape[0])
+    obj_feats[0, :n_obj] = feat[:n_obj]
+
+    video_mask = np.zeros((1, n_obj_feats))
+    video_mask[0, :n_obj] = 1
 
     #interval_frame = video_feat.shape[1]/encoder_step
     #video_feat = video_feat[:, range(0, encoder_step*interval_frame, interval_frame), :]
-    video_feat = sampling(video_feat, sampling_rate)
+    #video_feat = sampling(video_feat, sampling_rate)
 
     generated_word_index = sess.run(
-        caption_tf,
+        tf_generated_words,
         feed_dict={
-            video_tf: video_feat,
-            video_mask_tf:video_mask,
-            obj_feats_tf: obj_feats,
+            #video_tf: video_feat,
+            tf_video_mask: video_mask,
+            tf_obj_feats: obj_feats,
         })
     #probs_val = sess.run(probs_tf, feed_dict={video_tf:video_feat})
     #embed_val = sess.run(last_embed_tf, feed_dict={video_tf:video_feat})
@@ -473,4 +477,4 @@ def sampling(video_feat, sampling_rate):
 
 if __name__=="__main__":
     #test(model_path='models/model-2999')
-    train(prev_model_path=None)
+    train(prev_model_path='models/model-2999')
