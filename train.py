@@ -4,16 +4,13 @@ import pandas as pd
 import os
 import tensorflow as tf
 
-from config import *
+from config.msrvtt_config import *
 from nets.obj_feat_att_net import VideoCaptionGenerator
-from utils import get_video_data, preProBuildWordVocab
+from utils.msrvtt_utils import get_video_data, preProBuildWordVocab
 
 
 def train(prev_model_path=None):
-    train_data, _ = get_video_data(video_data_path, video_feat_path, train_ratio=0.7)
-    captions = train_data['Description'].values
-    captions = map(lambda x: x.replace('.', ''), captions)
-    captions = map(lambda x: x.replace(',', ''), captions)
+    captions = get_video_data(video_data_path_train, video_feat_path_train)
     wordtoix, ixtoword, bias_init_vector = preProBuildWordVocab(captions, word_count_threshold=10)
 
     np.save('./data/ixtoword', ixtoword)
@@ -41,27 +38,29 @@ def train(prev_model_path=None):
         saver.restore(sess, prev_model_path)
 
     for epoch in range(n_epochs):
-        index = list(train_data.index)
-        np.random.shuffle(index)
-        current_train_data = train_data.ix[index]
+        # Select one sentence randomly.
+        current_videos = list()
+        current_sents = list()
+        for video_id, sents in captions.items():
+            current_videos.append(video_id)
+            current_sents.append(sents[np.random.choice(len(sents))])
+        len_current_videos = len(current_videos)
 
-        current_train_data = train_data.groupby('video_path').apply(
-            lambda x: x.iloc[np.random.choice(len(x))])
-        current_train_data = current_train_data.reset_index(drop=True)
+        for start,end in zip(range(0, len_current_videos, batch_size),
+                range(batch_size, len_current_videos, batch_size)):
+            batch_videos = current_videos[start:end]
+            batch_sents = current_sents[start:end]
 
-        for start,end in zip(
-                range(0, len(current_train_data), batch_size),
-                range(batch_size, len(current_train_data), batch_size)):
+            print batch_videos
 
-            current_batch = current_train_data[start:end]
-            current_videos = current_batch['video_path'].values
             # Frame feature.
             #current_feats = np.zeros((batch_size, encoder_step, dim_image))
             #current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
+
             # Object features.
             current_obj_feats = np.zeros((batch_size, n_obj_feats, dim_obj_feats))
-            current_obj_feats_vals = map(lambda vid: np.load(os.path.join(video_obj_feat_path, vid)), current_videos)
-
+            current_obj_feats_vals = map(
+                lambda vid: np.load(os.path.join(video_feat_path_train, vid+'.mp4.npy')), batch_videos)
             current_video_masks = np.zeros((batch_size, n_obj_feats))
 
             #for ind, feat in enumerate(current_feats_vals):
@@ -77,20 +76,20 @@ def train(prev_model_path=None):
                     current_obj_feats[ind][:n_obj] = feat[:n_obj]
                     current_video_masks[ind][:n_obj] = 1
 
-            current_captions = current_batch['Description'].values
-            for idx, cc in enumerate( current_captions ):
-                current_captions[idx] = cc.replace('.', '').replace(',', '')
+            #for idx, cc in enumerate(batch_sents):
+            #    current_captions[idx] = cc.replace('.', '').replace(',', '')
 
             current_captions_ind  = map(
                 lambda cap : [wordtoix[word] for word in cap.lower().split(' ') if word in wordtoix],
-                current_captions)
+                batch_sents)
 
-            current_caption_matrix = sequence.pad_sequences(current_captions_ind, padding='post', maxlen=decoder_step-1, value=0)
+            current_caption_matrix = sequence.pad_sequences(
+                current_captions_ind, padding='post', maxlen=decoder_step-1, value=0)
             current_caption_matrix = np.hstack(
                 [current_caption_matrix, np.zeros([len(current_caption_matrix), 1])]).astype(int)
+
             current_caption_masks = np.zeros((current_caption_matrix.shape[0], current_caption_matrix.shape[1]))
             nonzeros = np.array(map(lambda x: (x != 0).sum()+1, current_caption_matrix))
-
             for ind, row in enumerate(current_caption_masks):
                 row[:nonzeros[ind]] = 1
 
@@ -116,4 +115,4 @@ def train(prev_model_path=None):
 
 
 if __name__=="__main__":
-    train(prev_model_path='models/model-2999')
+    train(prev_model_path=None)

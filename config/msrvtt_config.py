@@ -1,9 +1,11 @@
 ############### Global Parameters ###############
-video_path = '/home/eric/Videos/youtube_videos'
-video_data_path='./data/video_corpus.csv'
-video_feat_path = '/home/eric/Videos/youtube_feats'
-video_obj_feat_path = '/home/eric/Videos/youtube_feats_resnet'
-meta_data_path = '/home/eric/Videos/youtube_feats_meta'
+video_path = '/home/eric/Videos/MSR-VTT/train-video'
+video_data_path_train = '/home/eric/Videos/MSR-VTT/videodatainfo_2017_ustc.json'
+video_feat_path_train = '/home/eric/Videos/MSR-VTT/features'
+meta_data_path_train = '/home/eric/Videos/MSR-VTT/metadata'
+
+video_data_path_test = '/home/eric/Videos/MSR-VTT/videodatainfo_2017_ustc.json'
+video_feat_path_test = '/home/eric/Videos/MSR-VTT/features'
 
 model_path = './models/'
 
@@ -18,5 +20,5 @@ decoder_step = n_obj_feats
 n_epochs = 3000
 batch_size = 128
 chunk_len = 8
-learning_rate = 0.00005
+learning_rate = 0.0001
 ##################################################
