@@ -112,4 +112,4 @@ def train(prev_model_path=None):
 
 
 if __name__=="__main__":
-    train(prev_model_path=None)
+    train(prev_model_path='models/model-899')

@@ -127,8 +127,8 @@ class VideoCaptionGenerator():
                 e_list = tf.stack([
                     tf.matmul(tf.tanh(tf.add(obj_emb_proj, state_proj)), self.obj_embed_att_w) \
                         for obj_emb_proj in obj_emb_projs], axis=0)
-                
-                weights = tf.nn.softmax(e_list, dim=0)
+                e_list_mask = tf.multiply(tf.expand_dims(tf.transpose(video_mask), -1), e_list)
+                weights = tf.nn.softmax(e_list_mask, dim=0)
                 generated_attention.append(weights)
 
                 emb_weighted = [tf.multiply(emb, tf.tile(weight, [1, self.dim_embed])) \
