@@ -15,12 +15,15 @@ def get_video_data(video_data_path, video_feat_path):
             video_id = sentence['video_id']
             if not video_id in captions:
                 captions[video_id] = list()
-            captions[video_id].append(sentence['caption'].replace('.', '').replace(',', ''))
+            captions[video_id].append(
+                sentence['caption'].replace('.', '').replace(',', ''))
     return captions
 
 
-def preProBuildWordVocab(sentence_iterator, word_count_threshold=5): # borrowed this function from NeuralTalk
-    print 'preprocessing word counts and creating vocab based on word count threshold %d' % (word_count_threshold, )
+# borrowed this function from NeuralTalk
+def preProBuildWordVocab(sentence_iterator, word_count_threshold=5):
+    print 'preprocessing word counts and creating vocab based on word count threshold %d' % \
+        (word_count_threshold, )
     word_counts = dict()
     nsents = 0
     for _, sents in sentence_iterator.items():

@@ -5,7 +5,7 @@ from tensorflow.contrib import rnn
 
 class VideoCaptionGenerator():
     def __init__(self, dim_image, n_words, dim_embed, dim_hidden, batch_size,
-            dim_obj_feats, n_obj_feats, encoder_max_sequence_length, decoder_max_sentence_length,
+            dim_obj_feats, n_obj_feats, decoder_max_sentence_length,
             bias_init_vector=None):
         self.dim_image = dim_image
         self.n_words = n_words
@@ -14,11 +14,19 @@ class VideoCaptionGenerator():
         self.batch_size = batch_size
         self.dim_obj_feats = dim_obj_feats
         self.n_obj_feats = n_obj_feats
-        self.encoder_max_sequence_length = encoder_max_sequence_length
+        #self.encoder_max_sequence_length = encoder_max_sequence_length
         self.decoder_max_sentence_length = decoder_max_sentence_length
 
         #with tf.device("/cpu:0"):
+        # Embedding of words.
         self.Wemb = tf.Variable(tf.random_uniform([n_words, dim_embed], -0.1, 0.1), name='Wemb')
+
+        # Decoder output to word.
+        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
+        if bias_init_vector is not None:
+            self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
+        else:
+            self.embed_word_b = tf.Variable(tf.zeros([n_words]), name='embed_word_b')
 
         # Image encoder LSTM input.
         #self.encoder_lstm_W = tf.Variable(tf.random_uniform([dim_embed, dim_hidden], -0.1, 0.1), name='encoder_lstm_W')
@@ -41,13 +49,6 @@ class VideoCaptionGenerator():
         #self.embed_decoder_W = tf.Variable(tf.random_uniform([dim_embed+dim_hidden*2, dim_embed], -0.1, 0.1), name='embed_decoder_W')
         #self.embed_decoder_b = tf.Variable(tf.zeros([dim_embed]), name='embed_decoder_b')    
 
-        # Embed words.
-        self.embed_word_W = tf.Variable(tf.random_uniform([dim_hidden, n_words], -0.1, 0.1), name='embed_word_W')
-        if bias_init_vector is not None:
-            self.embed_word_b = tf.Variable(bias_init_vector.astype(np.float32), name='embed_word_b')
-        else:
-            self.embed_word_b = tf.Variable(tf.zeros([n_words]), name='embed_word_b')
-
         # Attention of image features.
         #self.embed_att_w = tf.Variable(tf.random_uniform([dim_hidden, 1], -0.1, 0.1), name='embed_att_w')
         #self.embed_att_Wa = tf.Variable(tf.random_uniform([dim_hidden, dim_hidden], -0.1, 0.1), name='embed_att_Wa')
@@ -62,13 +63,13 @@ class VideoCaptionGenerator():
 
 
     def build_model(self, is_test=False):
-        # Average of all obj features.
+        batch_size = 1 if is_test else self.batch_size
+
         def length(seq):
             used = tf.sign(tf.reduce_max(tf.abs(seq), 2))
             return tf.cast(tf.reduce_sum(used, 1), tf.int32) 
- 
-        batch_size = 1 if is_test else self.batch_size
 
+        # Inputs.
         #video = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length, self.dim_image])
         video_mask = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats])
         obj_feats = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats, self.dim_obj_feats])
@@ -79,7 +80,6 @@ class VideoCaptionGenerator():
         # Build model.
         generated_words = list()
         generated_attention = list()
-        probs = list()
         loss = 0.0
 
         # Input feature of attention LSTM.
@@ -104,7 +104,7 @@ class VideoCaptionGenerator():
         state_decoder = decoder.zero_state(self.batch_size, dtype=tf.float32)
         output_decoder = state_decoder.h
 
-        for i in range(self.encoder_max_sequence_length):
+        for i in range(self.decoder_max_sentence_length):
             with tf.variable_scope("Decoder"):
                 # Input Att LSTM: Previously word.
                 if i == 0:
@@ -127,11 +127,11 @@ class VideoCaptionGenerator():
                 e_list = tf.stack([
                     tf.matmul(tf.tanh(tf.add(obj_emb_proj, state_proj)), self.obj_embed_att_w) \
                         for obj_emb_proj in obj_emb_projs], axis=0)
+                
                 weights = tf.nn.softmax(e_list, dim=0)
                 generated_attention.append(weights)
 
-                emb_weighted = [
-                    tf.multiply(emb, tf.tile(weight, [1, self.dim_embed])) \
+                emb_weighted = [tf.multiply(emb, tf.tile(weight, [1, self.dim_embed])) \
                         for weight, emb in zip(tf.unstack(weights, axis=0), tf.unstack(obj_embs, axis=1))]
                 emb_weighted_sum = tf.reduce_sum(emb_weighted, 0)
 
@@ -141,7 +141,6 @@ class VideoCaptionGenerator():
                     tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder)
 
                 logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
-                probs.append(logit_words)
 
                 if is_test:
                     max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -158,4 +157,4 @@ class VideoCaptionGenerator():
 
         if not is_test:
             loss = loss / tf.reduce_sum(caption_mask)
-        return loss, video_mask, obj_feats, caption, caption_mask, probs, generated_words, generated_attention
+        return loss, obj_feats, video_mask, caption, caption_mask, generated_words, generated_attention
