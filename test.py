@@ -177,4 +177,4 @@ def gen_sentence(sess, tf_video_mask, tf_obj_feats, tf_generated_words, tf_gener
 
 
 if __name__=="__main__":
-    test(model_path='models_cp/model-999')
+    test(model_path=init_model_path)
