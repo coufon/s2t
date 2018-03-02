@@ -33,11 +33,13 @@ def train(prev_model_path=None):
 
     saver = tf.train.Saver(max_to_keep=5)
     train_op = tf.train.AdamOptimizer(learning_rate).minimize(tf_loss)
-    tf.initialize_all_variables().run()
-    # sess.run(tf.global_variables_initializer())
+    sess.run(tf.global_variables_initializer())
 
     if not prev_model_path is None:
         saver.restore(sess, prev_model_path)
+
+    # Setup TensorBoard.
+    file_writer = tf.summary.FileWriter('logs/train.log', sess.graph)
 
     for epoch in range(n_epochs):
         # Select one sentence randomly.

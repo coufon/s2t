@@ -65,17 +65,13 @@ class VideoCaptionGenerator():
     def build_model(self, is_test=False):
         batch_size = 1 if is_test else self.batch_size
 
-        def length(seq):
-            used = tf.sign(tf.reduce_max(tf.abs(seq), 2))
-            return tf.cast(tf.reduce_sum(used, 1), tf.int32) 
-
         # Inputs.
         #video = tf.placeholder(tf.float32, [batch_size, self.encoder_max_sequence_length, self.dim_image])
-        video_mask = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats])
-        obj_feats = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats, self.dim_obj_feats])
+        video_mask = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats], name='video_masks')
+        obj_feats = tf.placeholder(tf.float32, [batch_size, self.n_obj_feats, self.dim_obj_feats], name='obj_feats')
 
-        caption = tf.placeholder(tf.int32, [batch_size, self.decoder_max_sentence_length])
-        caption_mask = tf.placeholder(tf.float32, [batch_size, self.decoder_max_sentence_length])
+        caption = tf.placeholder(tf.int32, [batch_size, self.decoder_max_sentence_length], name='captions')
+        caption_mask = tf.placeholder(tf.float32, [batch_size, self.decoder_max_sentence_length], name='caption_masks')
 
         # Build model.
         generated_words = list()
@@ -90,7 +86,7 @@ class VideoCaptionGenerator():
 
         # Average features.
         avg_obj_feats = tf.reduce_sum(obj_embs, 1)/tf.reshape(
-            tf.cast(length(obj_embs), tf.float32), (-1, 1))
+            tf.cast(tf.reduce_sum(video_mask, 1), tf.float32), (-1, 1))
 
         # Projected features for attention.
         obj_emb_projs = [
@@ -107,46 +103,48 @@ class VideoCaptionGenerator():
         state_decoder1 = decoder1.zero_state(self.batch_size, dtype=tf.float32)
         output_decoder1 = state_decoder1.h
 
-        for i in range(self.decoder_max_sentence_length):
-            with tf.variable_scope("Decoder"):
+        with tf.variable_scope("Model"):
+            for i in range(self.decoder_max_sentence_length):
                 # Input Att LSTM: Previously word.
                 if i == 0:
                     prev_word_embed = tf.zeros([batch_size, self.dim_embed])
                 else:
-                    tf.get_variable_scope().reuse_variables()
                     if is_test:
                         prev_word_embed = tf.nn.embedding_lookup(self.Wemb, max_prob_index)
                         prev_word_embed = tf.expand_dims(prev_word_embed, 0)
                     else:
                         prev_word_embed = tf.nn.embedding_lookup(self.Wemb, caption[:, i-1])
 
-            with tf.variable_scope("Attention"):
-                # Attention LSTM.
-                (output_att_lstm, state_att_lstm) = att_lstm(
-                    tf.concat([output_decoder1, avg_obj_feats, prev_word_embed], 1), state_att_lstm)
+                with tf.variable_scope("Attention"):
+                    # Attention LSTM.
+                    with tf.variable_scope("Att_lstm", reuse=tf.AUTO_REUSE):
+                        (output_att_lstm, state_att_lstm) = att_lstm(
+                            tf.concat([output_decoder1, avg_obj_feats, prev_word_embed], 1), state_att_lstm)
 
-                # Attention.
-                state_proj = tf.matmul(output_att_lstm, self.obj_embed_att_Ua)
-                e_list = tf.stack([
-                    tf.matmul(tf.tanh(tf.add(obj_emb_proj, state_proj)), self.obj_embed_att_w) \
-                        for obj_emb_proj in obj_emb_projs], axis=0)
-                e_list = tf.exp(e_list)
-                e_list_mask = tf.multiply(tf.expand_dims(tf.transpose(video_mask), -1), e_list)
-                weights = e_list_mask/tf.reduce_sum(e_list_mask, axis=0)
-                generated_attention.append(weights)
+                    # Attention.
+                    state_proj = tf.matmul(output_att_lstm, self.obj_embed_att_Ua)
+                    e_list = tf.stack([
+                        tf.matmul(tf.tanh(tf.add(obj_emb_proj, state_proj)), self.obj_embed_att_w) \
+                            for obj_emb_proj in obj_emb_projs], axis=0)
+                    e_list = tf.exp(e_list)
+                    e_list_mask = tf.multiply(tf.expand_dims(tf.transpose(video_mask), -1), e_list)
+                    weights = e_list_mask/tf.reduce_sum(e_list_mask, axis=0)
+                    generated_attention.append(weights)
 
-                emb_weighted = [tf.multiply(emb, tf.tile(weight, [1, self.dim_embed])) \
-                        for weight, emb in zip(tf.unstack(weights, axis=0), tf.unstack(obj_embs, axis=1))]
-                emb_weighted_sum = tf.reduce_sum(emb_weighted, 0)
+                    emb_weighted = [tf.multiply(emb, tf.tile(weight, [1, self.dim_embed])) \
+                            for weight, emb in zip(tf.unstack(weights, axis=0), tf.unstack(obj_embs, axis=1))]
+                    emb_weighted_sum = tf.reduce_sum(emb_weighted, 0)
 
-            with tf.variable_scope("Decoder"):
-                # Word decoder LSTM.
-                (output_decoder0, state_decoder0) = decoder0(
-                    tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder0)
+                with tf.variable_scope("Decoder"):
+                    # Word decoder LSTM.
+                    with tf.variable_scope("Bottom_lstm", reuse=tf.AUTO_REUSE):
+                        (output_decoder0, state_decoder0) = decoder0(
+                            tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder0)
 
-                (output_decoder1, state_decoder1) = decoder1(output_decoder0, state_decoder1)
+                    with tf.variable_scope("Top_lstm", reuse=tf.AUTO_REUSE):
+                        (output_decoder1, state_decoder1) = decoder1(output_decoder0, state_decoder1)
 
-                logit_words = tf.nn.xw_plus_b(output_decoder1, self.embed_word_W, self.embed_word_b)
+                    logit_words = tf.nn.xw_plus_b(output_decoder1, self.embed_word_W, self.embed_word_b)
 
                 if is_test:
                     max_prob_index = tf.argmax(logit_words, 1)[0]
@@ -161,6 +159,7 @@ class VideoCaptionGenerator():
                     current_loss = tf.reduce_sum(cross_entropy)
                     loss += current_loss
 
-        if not is_test:
-            loss = loss / tf.reduce_sum(caption_mask)
+            if not is_test:
+                loss = loss / tf.reduce_sum(caption_mask)
+
         return loss, obj_feats, video_mask, caption, caption_mask, generated_words, generated_attention

@@ -74,7 +74,7 @@ def test(model_path='models/model-61'):
         #plt.plot(generated_att)
         #plt.show()
         #print generated_sentence_test
-        #print caption
+        print caption
 
         if False:
             words = generated_sentence.split(' ')

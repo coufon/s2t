@@ -23,4 +23,4 @@ decoder_step = n_obj_feats
 n_epochs = 1000
 batch_size = 128
 learning_rate = 0.0001
-init_model_path = 'models/model-999'
+init_model_path = None
