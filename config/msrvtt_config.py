@@ -1,11 +1,13 @@
 # Global Parameters.
-video_path = '/home/eric/Videos/MSR-VTT/train-video'
-video_data_path_train = '/home/data/MSR-VTT/videodatainfo_2017_ustc.json'
-video_feat_path_train = '/home/data/MSR-VTT/features'
-meta_data_path_train = '/home/eric/Videos/MSR-VTT/metadata'
+video_path_train = '/home/eric/Videos/MSR-VTT/train-video'
+video_data_path_train = '/home/eric/Videos/MSR-VTT/videodatainfo_2017_ustc.json'
+video_feat_path_train = '/home/eric/Videos/MSR-VTT/train_features'
+meta_data_path_train = '/home/eric/Videos/MSR-VTT/train_metadata'
 
-video_data_path_test = '/home/eric/Videos/MSR-VTT/videodatainfo_2017_ustc.json'
-video_feat_path_test = '/home/eric/Videos/MSR-VTT/features'
+video_path_test = '/home/eric/Videos/MSR-VTT/test-video'
+video_data_path_test = '/home/eric/Videos/MSR-VTT/test_videodatainfo_2017.json'
+video_feat_path_test = '/home/eric/Videos/MSR-VTT/test_features'
+meta_data_path_test = '/home/eric/Videos/MSR-VTT/test_metadata'
 
 model_path = './models/'
 

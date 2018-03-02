@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
+import random
 import tensorflow as tf
 
 from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
@@ -18,7 +19,7 @@ from utils.msrvtt_utils import get_video_data, preProBuildWordVocab
 
 
 def test(model_path='models/model-61'):
-    captions = get_video_data(video_data_path_train, video_feat_path_train)
+    captions = get_video_data(video_data_path_test, video_feat_path_test)
     ixtoword = pd.Series(np.load('./data/ixtoword.npy').tolist())
 
     model = VideoCaptionGenerator(
@@ -46,26 +47,28 @@ def test(model_path='models/model-61'):
     counter = 0
 
     for vid, caption in captions.items():
-        # Collect frames.
-        cap = cv2.VideoCapture(os.path.join(video_path, vid+'.mp4'))
-        frames = list()
-        while True:
-            ret, im = cap.read()
-            if ret is False:
-                break
-            frames.append(im)
+        print counter
+        if False:
+            # Collect frames.
+            cap = cv2.VideoCapture(os.path.join(video_path_test, vid+'.mp4'))
+            frames = list()
+            while True:
+                ret, im = cap.read()
+                if ret is False:
+                    break
+                frames.append(im)
 
         # Load meta data.
-        with open(os.path.join(meta_data_path_train, vid+'.mp4.txt'), 'r') as f:
+        with open(os.path.join(meta_data_path_test, vid+'.mp4.txt'), 'r') as f:
             meta_data = json.load(f)
             all_feats = meta_data['features']
 
-        generated_sentence, generated_att, video_mask = gen_sentence(
+        generated_sentence, generated_att, _ = gen_sentence(
             sess, tf_video_mask, tf_obj_feats, tf_generated_words, tf_generated_att, vid, ixtoword)
         #generated_sentence_test, weights = gen_sentence(
         #    sess, video_tf, video_mask_tf, caption_tf, vid, ixtoword, weights_tf, 0.3)
         generated_att = [att[:, 0, 0] for att in generated_att]
-        print generated_att
+        #print generated_att
 
         print vid, generated_sentence
         #plt.plot(generated_att)
@@ -73,18 +76,35 @@ def test(model_path='models/model-61'):
         #print generated_sentence_test
         #print caption
 
-        words = generated_sentence.split(' ')
-        feats = list()
-        for i, w in enumerate(words):
-            i_best_feat = np.argmax(np.multiply(generated_att[i], video_mask[0]))
-            print w, i_best_feat
-            if i_best_feat < len(all_feats):
-                feat = all_feats[i_best_feat]   
-                i_frame = feat[0]
-                bbox = feat[2]
-                im = frames[i_frame][bbox[2]:bbox[3], bbox[0]:bbox[1]]
-                cv2.imshow('test', im)
-                cv2.waitKey(10000)
+        if False:
+            words = generated_sentence.split(' ')
+            feats = list()
+            for i, w in enumerate(words):
+                i_best_feat_list = np.argsort(generated_att[i])[::-1]
+                imgs = list()
+                for i_best_feat in i_best_feat_list:
+                    weight = generated_att[i][i_best_feat]
+                    if weight < 0.1:
+                        break
+                    print w, i_best_feat
+                    if all_feats is None or len(all_feats) == 0:
+                        im = cv2.resize(frames[:len(frames):len(frames)/4][i_best_feat], (300, 300))
+                    else:
+                        feat = all_feats[i_best_feat]   
+                        i_frame = feat[0]
+                        bbox = feat[2]
+                        im = np.copy(frames[i_frame][bbox[2]:bbox[3], bbox[0]:bbox[1]])
+                        im = cv2.resize(im, (300, 300))
+                    constant=cv2.copyMakeBorder(im,10,10,10,10,cv2.BORDER_CONSTANT,value=[0,0,0])
+                    violet= np.zeros((30, constant.shape[1], 3), np.uint8)
+                    violet[:] = (255, 255, 255)
+                    vcat = cv2.vconcat((violet, constant))
+                    cv2.putText(vcat, str(weight),(10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, 0)
+                    imgs.append(vcat)
+                if imgs:
+                    final_img = cv2.hconcat(imgs)
+                    cv2.imshow('test', final_img)
+                    cv2.waitKey(10000)
 
         GTS[str(counter)] = [{'image_id':str(counter),'cap_id':i,'caption':s} for i, s in enumerate(caption)]
         RES[str(counter)] = [{'image_id':str(counter),'caption':generated_sentence[:-2]+'.'}]
@@ -127,7 +147,7 @@ def gen_sentence(sess, tf_video_mask, tf_obj_feats, tf_generated_words, tf_gener
     #current_feats_vals = map(lambda vid: np.load(os.path.join(video_feat_path, vid)), current_videos)
     # Object features.
     obj_feats = np.zeros((1, n_obj_feats, dim_obj_feats))
-    feat = np.load(os.path.join(video_feat_path_train, vid+'.mp4.npy'))
+    feat = np.load(os.path.join(video_feat_path_test, vid+'.mp4.npy'))
     n_obj = min(n_obj_feats, feat.shape[0])
     obj_feats[0, :n_obj] = feat[:n_obj]
 
