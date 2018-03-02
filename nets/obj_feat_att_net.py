@@ -99,10 +99,13 @@ class VideoCaptionGenerator():
 
         # LSTMs.
         att_lstm = rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)
-        decoder = rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)
+        decoder0 = rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)
+        decoder1 = rnn.BasicLSTMCell(num_units=self.dim_hidden, state_is_tuple=True)
+        
         state_att_lstm = att_lstm.zero_state(self.batch_size, dtype=tf.float32)
-        state_decoder = decoder.zero_state(self.batch_size, dtype=tf.float32)
-        output_decoder = state_decoder.h
+        state_decoder0 = decoder0.zero_state(self.batch_size, dtype=tf.float32)
+        state_decoder1 = decoder1.zero_state(self.batch_size, dtype=tf.float32)
+        output_decoder1 = state_decoder1.h
 
         for i in range(self.decoder_max_sentence_length):
             with tf.variable_scope("Decoder"):
@@ -120,7 +123,7 @@ class VideoCaptionGenerator():
             with tf.variable_scope("Attention"):
                 # Attention LSTM.
                 (output_att_lstm, state_att_lstm) = att_lstm(
-                    tf.concat([output_decoder, avg_obj_feats, prev_word_embed], 1), state_att_lstm)
+                    tf.concat([output_decoder1, avg_obj_feats, prev_word_embed], 1), state_att_lstm)
 
                 # Attention.
                 state_proj = tf.matmul(output_att_lstm, self.obj_embed_att_Ua)
@@ -138,10 +141,12 @@ class VideoCaptionGenerator():
 
             with tf.variable_scope("Decoder"):
                 # Word decoder LSTM.
-                (output_decoder, state_decoder) = decoder(
-                    tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder)
+                (output_decoder0, state_decoder0) = decoder0(
+                    tf.concat([emb_weighted_sum, output_att_lstm], 1), state_decoder0)
 
-                logit_words = tf.nn.xw_plus_b(output_decoder, self.embed_word_W, self.embed_word_b)
+                (output_decoder1, state_decoder1) = decoder1(output_decoder0, state_decoder1)
+
+                logit_words = tf.nn.xw_plus_b(output_decoder1, self.embed_word_W, self.embed_word_b)
 
                 if is_test:
                     max_prob_index = tf.argmax(logit_words, 1)[0]
