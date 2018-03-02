@@ -2,6 +2,7 @@ from keras.preprocessing import sequence
 import numpy as np
 import pandas as pd
 import os
+import random
 import tensorflow as tf
 
 from config.msrvtt_config import *
@@ -48,6 +49,11 @@ def train(prev_model_path=None):
             current_videos.append(video_id)
             # Randomly select one sentence.
             current_sents.append(sents[np.random.choice(len(sents))])
+
+        # Shuffle training data.
+        videos_sents = list(zip(current_videos, current_sents))
+        random.shuffle(videos_sents)
+        current_videos, current_sents = zip(*videos_sents)
 
         len_current_videos = len(current_videos)
         for start,end in zip(range(0, len_current_videos, batch_size),
