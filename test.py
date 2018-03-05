@@ -2,7 +2,6 @@ from collections import defaultdict
 import cv2
 import ipdb
 import json
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
@@ -59,9 +58,9 @@ def test(model_path='models/model-61'):
                 frames.append(im)
 
         # Load meta data.
-        with open(os.path.join(meta_data_path_test, vid+'.mp4.txt'), 'r') as f:
-            meta_data = json.load(f)
-            all_feats = meta_data['features']
+        #with open(os.path.join(meta_data_path_test, vid+'.mp4.txt'), 'r') as f:
+        #    meta_data = json.load(f)
+        #    all_feats = meta_data['features']
 
         generated_sentence, generated_att, _ = gen_sentence(
             sess, tf_video_mask, tf_obj_feats, tf_generated_words, tf_generated_att, vid, ixtoword)
@@ -74,7 +73,7 @@ def test(model_path='models/model-61'):
         #plt.plot(generated_att)
         #plt.show()
         #print generated_sentence_test
-        print caption
+        #print caption
 
         if False:
             words = generated_sentence.split(' ')

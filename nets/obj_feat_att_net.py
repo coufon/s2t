@@ -160,6 +160,6 @@ class VideoCaptionGenerator():
                     loss += current_loss
 
             if not is_test:
-                loss = loss / tf.reduce_sum(caption_mask)
+                loss = loss / self.batch_size #tf.reduce_sum(caption_mask)
 
         return loss, obj_feats, video_mask, caption, caption_mask, generated_words, generated_attention

@@ -6,13 +6,19 @@ import pandas as pd
 from config import *
 
 
-def get_video_data(video_data_path, video_feat_path):
+def get_video_data(video_data_path, video_feat_path, is_test=False):
     captions = dict()
     with open(video_data_path, 'r') as f:
         video_data = json.load(f)
-        all_sentences = video_data['sentences']
+        if not is_test:
+            all_videos = set([v['video_id'] for v in video_data['videos'][:6513]])
+        else:
+            all_videos = set([v['video_id'] for v in video_data['videos'][7010:]])
+       	all_sentences = video_data['sentences']
         for sentence in all_sentences:
             video_id = sentence['video_id']
+            if not video_id in all_videos:
+                continue
             if not video_id in captions:
                 captions[video_id] = list()
             captions[video_id].append(

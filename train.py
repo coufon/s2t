@@ -13,7 +13,7 @@ from utils.msrvtt_utils import get_video_data, preProBuildWordVocab
 def train(prev_model_path=None):
     captions = get_video_data(video_data_path_train, video_feat_path_train)
     wordtoix, ixtoword, bias_init_vector = \
-        preProBuildWordVocab(captions, word_count_threshold=10)
+        preProBuildWordVocab(captions, word_count_threshold=5)
     np.save('./data/ixtoword', ixtoword)
 
     model = VideoCaptionGenerator(
