@@ -1,4 +1,5 @@
 import json
+import nltk
 import numpy as np
 import os
 import pandas as pd
@@ -21,8 +22,9 @@ def get_video_data(video_data_path, video_feat_path, is_test=False):
                 continue
             if not video_id in captions:
                 captions[video_id] = list()
-            captions[video_id].append(
-                sentence['caption'].replace('.', '').replace(',', ''))
+
+            sent_processed = sentence['caption'].replace('.', '').replace(',', '').replace('\n', '').replace('\r', '').encode('ascii', 'ignore').decode('ascii').lower()
+            captions[video_id].append(nltk.tokenize.word_tokenize(sent_processed))
     return captions
 
 
@@ -35,7 +37,8 @@ def preProBuildWordVocab(sentence_iterator, word_count_threshold=5):
     for _, sents in sentence_iterator.items():
         for sent in sents:
             nsents += 1
-            for w in sent.lower().split(' '):
+            #for w in sent.lower().split(' '):
+            for w in sent:
                 word_counts[w] = word_counts.get(w, 0) + 1
 
     vocab = [w for w in word_counts if word_counts[w] >= word_count_threshold]

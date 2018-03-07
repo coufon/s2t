@@ -18,7 +18,7 @@ from utils.msrvtt_utils import get_video_data, preProBuildWordVocab
 
 
 def test(model_path='models/model-61'):
-    captions = get_video_data(video_data_path_test, video_feat_path_test)
+    captions = get_video_data(video_data_path_test, video_feat_path_test, is_test=True)
     ixtoword = pd.Series(np.load('./data/ixtoword.npy').tolist())
 
     model = VideoCaptionGenerator(
@@ -69,7 +69,7 @@ def test(model_path='models/model-61'):
         generated_att = [att[:, 0, 0] for att in generated_att]
         #print generated_att
 
-        print vid, generated_sentence
+        print vid, generated_sentence[:-2]
         #plt.plot(generated_att)
         #plt.show()
         #print generated_sentence_test
@@ -105,8 +105,8 @@ def test(model_path='models/model-61'):
                     cv2.imshow('test', final_img)
                     cv2.waitKey(10000)
 
-        GTS[str(counter)] = [{'image_id':str(counter),'cap_id':i,'caption':s} for i, s in enumerate(caption)]
-        RES[str(counter)] = [{'image_id':str(counter),'caption':generated_sentence[:-2]+'.'}]
+        GTS[str(counter)] = [{'image_id':str(counter),'cap_id':i,'caption':' '.join(s)} for i, s in enumerate(caption)]
+        RES[str(counter)] = [{'image_id':str(counter),'caption':generated_sentence[:-2]}]
 
         #GTS[vid] = caption
         #RES[vid] = [generated_sentence[:-2] + '.']

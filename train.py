@@ -1,4 +1,5 @@
 from keras.preprocessing import sequence
+import nltk
 import numpy as np
 import pandas as pd
 import os
@@ -13,7 +14,7 @@ from utils.msrvtt_utils import get_video_data, preProBuildWordVocab
 def train(prev_model_path=None):
     captions = get_video_data(video_data_path_train, video_feat_path_train)
     wordtoix, ixtoword, bias_init_vector = \
-        preProBuildWordVocab(captions, word_count_threshold=5)
+        preProBuildWordVocab(captions, word_count_threshold=3)
     np.save('./data/ixtoword', ixtoword)
 
     model = VideoCaptionGenerator(
@@ -89,7 +90,8 @@ def train(prev_model_path=None):
             #    current_captions[idx] = cc.replace('.', '').replace(',', '')
 
             current_captions_ind  = map(
-                lambda x : [wordtoix[word] for word in x.lower().split(' ') if word in wordtoix],
+                #lambda x : [wordtoix[word] for word in x.lower().split(' ') if word in wordtoix],
+                lambda x : [wordtoix[word] for word in x if word in wordtoix],
                 batch_sents)
 
             current_caption_matrix = sequence.pad_sequences(
